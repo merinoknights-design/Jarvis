@@ -488,8 +488,14 @@ def execute_universal_cad_plan(plan: Dict[str, Any], save_path: Path) -> Dict[st
     elif shape in ["flange", "coupling"]:
         return build_flange_coupling_part(plan, save_path)
     else:
-        return execute_cad_feature_plan(plan, save_path)
+        return build_prismatic_machined_part(plan, save_path)
 
+
+# Alias oficial de compatibilidad
+execute_cad_feature_plan = execute_universal_cad_plan
+
+
+def build_prismatic_machined_part(plan: Dict[str, Any], save_path: Path) -> Dict[str, Any]:
     app = get_or_start_solidedge()
     doc = app.Documents.Add("SolidEdge.PartDocument")
     switch_to_ordered_mode(doc)
