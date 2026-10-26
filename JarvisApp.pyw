@@ -10,105 +10,85 @@ OLLAMA_APP = Path.home() / "AppData" / "Local" / "Programs" / "Ollama" / "ollama
 PYTHON_EXE = BASE_DIR / "venv" / "Scripts" / "python.exe"
 SERVER_SCRIPT = BASE_DIR / "server.py"
 APP_URL = "http://127.0.0.1:7777"
-GITHUB_ARCHIVE_URL = "https://github.com/merinoknights-design/Jarvis/archive/refs/heads/main.tar.gz"
 
 
-def auto_update_from_github() -> bool:
-    """Descarga los últimos cambios desde GitHub y devuelve True si actualizó."""
+def is_server_running() -> bool:
+    """Verifica si el servidor de Jarvis ya está activo y respondiendo."""
     try:
-        tar_file = BASE_DIR / "update_pkg.tar.gz"
-        urllib.request.urlretrieve(GITHUB_ARCHIVE_URL, str(tar_file))
-        if tar_file.exists():
-            subprocess.run(
-                ["tar.exe", "-xzf", str(tar_file), "--strip-components=1", "-C", str(BASE_DIR)],
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                timeout=10
-            )
-            tar_file.unlink(missing_ok=True)
-            return True
-    except Exception:
-        pass
-    return False
-
-
-def is_port_open(url: str) -> bool:
-    try:
-        urllib.request.urlopen(url, timeout=1.2)
-        return True
+        req = urllib.request.Request(f"{APP_URL}/api/status", headers={"User-Agent": "JarvisLauncher/2.0"})
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            return resp.status == 200
     except Exception:
         return False
 
 
-def stop_existing_server():
-    """Detiene cualquier instancia vieja de server.py para que tome el código nuevo."""
-    try:
-        req = urllib.request.Request(f"{APP_URL}/api/shutdown", method="POST")
-        urllib.request.urlopen(req, timeout=1.5)
-        time.sleep(0.6)
-    except Exception:
-        pass
-    try:
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             "Get-NetTCPConnection -LocalPort 7777 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"],
-            creationflags=subprocess.CREATE_NO_WINDOW,
-            timeout=4
-        )
-    except Exception:
-        pass
-
-
 def ensure_ollama():
-    if not is_port_open("http://127.0.0.1:11434/api/tags"):
+    """Inicia Ollama si está instalado y no está corriendo."""
+    try:
+        urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=0.8)
+    except Exception:
         if OLLAMA_APP.exists():
-            subprocess.Popen(
-                [str(OLLAMA_APP)],
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-            )
+            try:
+                subprocess.Popen(
+                    [str(OLLAMA_APP)],
+                    creationflags=subprocess.CREATE_NO_WINDOW | getattr(subprocess, "DETACHED_PROCESS", 0)
+                )
+            except Exception:
+                pass
 
 
-def start_fresh_server():
-    stop_existing_server()
+def ensure_server():
+    """Inicia el servidor de Jarvis en segundo plano si no está corriendo."""
+    if is_server_running():
+        return
+
     py = str(PYTHON_EXE) if PYTHON_EXE.exists() else sys.executable
     subprocess.Popen(
         [py, str(SERVER_SCRIPT)],
         cwd=str(BASE_DIR),
         creationflags=subprocess.CREATE_NO_WINDOW
     )
-    for _ in range(25):
-        if is_port_open(f"{APP_URL}/api/status"):
+
+    # Esperar hasta que el servidor responda
+    for _ in range(20):
+        if is_server_running():
             break
-        time.sleep(0.35)
+        time.sleep(0.25)
 
 
-def launch_app_window():
-    edge_paths = [
+def launch_interface():
+    """
+    Abre la interfaz táctica de Jarvis en una ventana limpia de aplicación,
+    sin flags no admitidos ni advertencias de seguridad del navegador.
+    """
+    browser_candidates = [
+        Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+        Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
         Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
         Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
     ]
-    chrome_paths = [
-        Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
-        Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
-    ]
 
-    for browser in chrome_paths + edge_paths:
+    for browser in browser_candidates:
         if browser.exists():
-            subprocess.Popen([
-                str(browser),
-                f"--app={APP_URL}",
-                "--window-size=1280,800",
-                "--window-position=120,80",
-                "--title=J.A.R.V.I.S.",
-                "--use-fake-ui-for-media-stream",
-                "--autoplay-policy=no-user-gesture-required",
-            ])
-            return
+            try:
+                subprocess.Popen([
+                    str(browser),
+                    f"--app={APP_URL}",
+                    "--window-size=1280,820",
+                    "--window-position=100,60"
+                ])
+                return
+            except Exception:
+                pass
 
-    os.startfile(APP_URL)
+    # Fallback al navegador predeterminado del sistema si no están en rutas estándar
+    try:
+        os.startfile(APP_URL)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
-    auto_update_from_github()
     ensure_ollama()
-    start_fresh_server()
-    launch_app_window()
+    ensure_server()
+    launch_interface()
