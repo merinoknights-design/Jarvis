@@ -25,6 +25,23 @@ from cad_engine import (
 )
 from file_analyzer import analyze_any_file, UPLOAD_DIR
 from git_sync import set_github_remote, push_update_to_github, pull_update_from_github
+from ui_controller import (
+    play_song_on_spotify_autonomous,
+    find_text_on_screen_and_click,
+    mouse_click,
+    mouse_scroll,
+    send_text_and_keys,
+    press_vk,
+    VK_MEDIA_PLAY_PAUSE,
+    VK_MEDIA_NEXT_TRACK,
+    VK_MEDIA_PREV_TRACK,
+    VK_VOLUME_UP,
+    VK_VOLUME_DOWN,
+    VK_VOLUME_MUTE,
+    VK_RETURN,
+    VK_SPACE,
+    VK_ESCAPE,
+)
 
 app = FastAPI(title="J.A.R.V.I.S. Sentient AI, Search & CAD System")
 
@@ -230,12 +247,76 @@ def instant_conversational_and_action_brain(user_msg: str) -> Optional[Dict[str,
             except Exception as e:
                 return {"reply": f"No pude conectar con Solid Edge 2026: {e}", "tool_used": "filesystem"}
 
-    # 6. SPOTIFY Y MÚSICA
+    # 6. CONTROL DE INTERFAZ GRÁFICA (CLICS POR VISIÓN OCR, SCROLL, TECLADO, COMENTARIOS Y MULTIMEDIA)
+    # 6.1 Hacer clic sobre cualquier palabra o botón en pantalla usando Visión OCR
+    click_match = re.search(r"(?:haz\s+|da\s+|dale\s+)?(doble\s+clic|clic\s+derecho|clic|click|oprime|presiona el bot[oó]n)\s+(?:en\s+|sobre\s+)?(.+)$", cleaned, re.IGNORECASE)
+    if click_match:
+        click_type = click_match.group(1).lower()
+        target_str = click_match.group(2).strip().strip("'\"")
+        coord_match = re.match(r"^(\d+)\s*[,xX ]\s*(\d+)$", target_str)
+        if coord_match:
+            cx, cy = int(coord_match.group(1)), int(coord_match.group(2))
+            mouse_click(cx, cy, button="right" if "derecho" in click_type else "left", double="doble" in click_type)
+            return {"reply": f"He hecho {click_type} en las coordenadas ({cx}, {cy}), Señor.", "tool_used": "puppeteer"}
+        else:
+            coords = find_text_on_screen_and_click(
+                target_str,
+                double_click=("doble" in click_type),
+                right_click=("derecho" in click_type)
+            )
+            if coords:
+                return {"reply": f"He localizado '{target_str}' en su pantalla en las coordenadas {coords} y he ejecutado el {click_type}, Señor.", "tool_used": "puppeteer"}
+            return {"reply": f"Escaneé su pantalla, Señor, pero no vi el texto '{target_str}' visible en este momento. Asegúrese de que la ventana esté en primer plano.", "tool_used": "puppeteer"}
+
+    # 6.2 Hacer Scroll arriba / abajo en cualquier ventana
+    if any(w in low for w in ["scroll abajo", "baja la página", "baja la pagina", "desplaza abajo", "haz scroll hacia abajo", "baja un poco"]):
+        mouse_scroll("down", amount=6)
+        return {"reply": "Desplazando hacia abajo, Señor.", "tool_used": "puppeteer"}
+
+    if any(w in low for w in ["scroll arriba", "sube la página", "sube la pagina", "desplaza arriba", "haz scroll hacia arriba", "sube un poco"]):
+        mouse_scroll("up", amount=6)
+        return {"reply": "Desplazando hacia arriba, Señor.", "tool_used": "puppeteer"}
+
+    # 6.3 Escribir texto o comentar en cualquier aplicación activa
+    write_match = re.search(r"^(?:escribe|escribir|comenta|comentar|redacta|digita)\s*[:\s]\s*(.+)$", cleaned, re.IGNORECASE)
+    if write_match:
+        text_to_type = write_match.group(1).strip()
+        send_text_and_keys(text_to_type, press_enter=True)
+        return {"reply": f"He escrito y enviado: '{text_to_type}' en la aplicación activa, Señor.", "tool_used": "puppeteer"}
+
+    # 6.4 Controles multimedia y de volumen universales (funcionan en Spotify, YouTube, VLC, etc.)
+    if any(w in low for w in ["pausa la música", "pausa la musica", "pausar música", "reanuda la música", "play música", "continúa la música"]):
+        press_vk(VK_MEDIA_PLAY_PAUSE)
+        return {"reply": "Reproducción alternada (Play/Pausa), Señor.", "tool_used": "puppeteer"}
+
+    if any(w in low for w in ["siguiente canción", "siguiente cancion", "cambia de canción", "pasa la canción", "siguiente pista"]):
+        press_vk(VK_MEDIA_NEXT_TRACK)
+        return {"reply": "Pasando a la siguiente canción, Señor.", "tool_used": "puppeteer"}
+
+    if any(w in low for w in ["canción anterior", "cancion anterior", "pista anterior"]):
+        press_vk(VK_MEDIA_PREV_TRACK)
+        return {"reply": "Volviendo a la canción anterior, Señor.", "tool_used": "puppeteer"}
+
+    if any(w in low for w in ["sube el volumen", "subir volumen", "más volumen", "mas volumen"]):
+        for _ in range(5):
+            press_vk(VK_VOLUME_UP)
+        return {"reply": "Volumen aumentado, Señor.", "tool_used": "puppeteer"}
+
+    if any(w in low for w in ["baja el volumen", "bajar volumen", "menos volumen"]):
+        for _ in range(5):
+            press_vk(VK_VOLUME_DOWN)
+        return {"reply": "Volumen reducido, Señor.", "tool_used": "puppeteer"}
+
+    if any(w in low for w in ["silencia", "mutea", "quitar sonido", "silenciar"]):
+        press_vk(VK_VOLUME_MUTE)
+        return {"reply": "Audio silenciado/activado, Señor.", "tool_used": "puppeteer"}
+
+    # 6.5 SPOTIFY Y MÚSICA CON REPRODUCCIÓN AUTÓNOMA POR VISIÓN + CLIC
     if "spotify" in low or any(w in low for w in ["pon la canción", "pon la cancion", "reproduce ", "pon música", "pon musica"]):
         song_match = re.search(r"(?:pon la canci[oó]n|reproduce|pon en spotify|pon|busca en spotify)\s+(.+?)(?:\s+en spotify)?$", cleaned, re.IGNORECASE)
         if song_match and song_match.group(1).lower().strip() not in ["spotify", "música", "musica"]:
             song = song_match.group(1).replace("en spotify", "").strip()
-            return {"reply": play_on_spotify(song), "tool_used": "puppeteer"}
+            return {"reply": play_song_on_spotify_autonomous(song), "tool_used": "puppeteer"}
         try:
             os.startfile("spotify:")
         except Exception:
