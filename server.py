@@ -26,6 +26,18 @@ from cad_engine import (
 from file_analyzer import analyze_any_file, UPLOAD_DIR
 from git_sync import set_github_remote, push_update_to_github, pull_update_from_github
 from intent_engine import classify_user_intent
+from stark_protocols import (
+    get_realtime_telemetry,
+    format_full_armor_diagnostic,
+    execute_stark_morning_briefing,
+    execute_clean_slate_protocol,
+    execute_house_party_protocol,
+    execute_hud_screen_scan,
+    execute_security_lockdown,
+    save_stark_note,
+    get_stark_notes_summary,
+    load_stark_memory,
+)
 from task_manager import execute_smart_task, pop_completed_notifications
 from web_workflows import (
     workflow_gmail_compose_or_send,
@@ -517,16 +529,78 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
         else:
             return {"reply": open_web_app_in_chrome_with_login_check("Gmail", "https://mail.google.com"), "tool_used": "puppeteer"}
 
-    # 7. HORA / DIAGNÓSTICO / CARPETAS / APLICACIONES Y WEB APPS EN CHROME
+    # 7. PROTOCOLOS ORIGINALES DE J.A.R.V.I.S. (IRON MAN) / TELEMETRÍA / BITÁCORA STARK / HORA / CARPETAS
+    if any(p in low for p in [
+        "informe matutino", "reporte matutino", "reporte de situación", "reporte de situacion",
+        "informe stark", "reporte stark", "buenos días jarvis", "buenos dias jarvis", "dame el informe",
+    ]):
+        return {"reply": execute_stark_morning_briefing(), "tool_used": "time"}
+
+    if any(p in low for p in [
+        "protocolo pizarra limpia", "pizarra limpia", "clean slate", "modo sigilo",
+        "minimiza todo", "minimizar todo", "despeja el escritorio", "limpia la pantalla",
+    ]):
+        return {"reply": execute_clean_slate_protocol(), "tool_used": "puppeteer"}
+
+    if any(p in low for p in [
+        "protocolo fiesta en casa", "fiesta en casa", "house party", "despliega todas las unidades",
+        "inicia estación de trabajo", "inicia estacion de trabajo", "modo iron man",
+    ]):
+        execute_smart_task(
+            "Protocolo Fiesta en Casa",
+            lambda: execute_house_party_protocol("Back in Black AC/DC"),
+            tool_name="puppeteer",
+            force_background=True,
+            notify_on_complete=True,
+        )
+        return {
+            "reply": "Activando el Protocolo Fiesta en Casa, Señor. Desplegando unidades de ingeniería CAD y encendiendo sistemas multimedia con AC/DC.",
+            "tool_used": "puppeteer",
+        }
+
+    if any(p in low for p in [
+        "escanea mi pantalla", "escanear pantalla", "qué hay en mi pantalla", "que hay en mi pantalla",
+        "analiza mi pantalla", "escaneo visual", "escaneo hud", "visión hud", "vision hud",
+    ]):
+        return {"reply": execute_hud_screen_scan(save_screenshot_Only=False), "tool_used": "puppeteer"}
+
+    if any(p in low for p in [
+        "toma una captura", "captura de pantalla", "captura mi pantalla", "guarda una captura", "screenshot",
+    ]):
+        return {"reply": execute_hud_screen_scan(save_screenshot_Only=True), "tool_used": "filesystem"}
+
+    if any(p in low for p in [
+        "protocolo de bloqueo", "bloquea el equipo", "bloquea la pantalla", "bloquear equipo", "protocolo de seguridad",
+    ]):
+        return {"reply": execute_security_lockdown(), "tool_used": "puppeteer"}
+
+    note_match = re.search(
+        r"^(?:recuerda\s+que|guarda\s+una\s+nota|guarda\s+la\s+nota|anota\s+en\s+la\s+bit[aá]cora|anota\s+que|apunta\s+que)\s*[:\s]\s*(.+)$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if note_match:
+        return {"reply": save_stark_note(note_match.group(1)), "tool_used": "memory"}
+
+    if any(p in low for p in [
+        "qué te pedí recordar", "que te pedi recordar", "lee mis notas", "ver mis notas",
+        "abre la bitácora", "abre la bitacora", "bitácora stark", "bitacora stark", "qué tienes en tu memoria",
+    ]):
+        return {"reply": get_stark_notes_summary(), "tool_used": "memory"}
+
+    if any(p in low for p in [
+        "diagnóstico completo", "diagnostico completo", "telemetría del reactor", "telemetria del reactor",
+        "estado del traje", "estado de la armadura", "nivel de energía", "nivel de energia",
+        "batería", "bateria", "qué procesos consumen", "que procesos consumen",
+    ]):
+        return {"reply": format_full_armor_diagnostic(), "tool_used": "filesystem"}
+
     if any(p in low for p in ["qué hora es", "que hora es", "dime la hora"]):
         now = datetime.datetime.now()
         return {"reply": f"Señor, son las {now.strftime('%H:%M')} del {now.strftime('%d/%m/%Y')}.", "tool_used": "time"}
 
     if any(p in low for p in ["estado del sistema", "cuánta ram", "cuanta ram", "uso de cpu", "diagnóstico del sistema", "diagnostico del sistema"]):
-        cpu = psutil.cpu_percent(interval=0.2)
-        ram = psutil.virtual_memory()
-        disk = psutil.disk_usage("C:/")
-        return {"reply": f"CPU al {cpu}%, Memoria RAM al {ram.percent}% ({round(ram.used/1e9,1)} GB usados) y {round(disk.free/1e9,1)} GB libres en disco C, Señor.", "tool_used": "filesystem"}
+        return {"reply": format_full_armor_diagnostic(), "tool_used": "filesystem"}
 
     for folder_name, folder_path in KNOWN_FOLDERS.items():
         if f"abre {folder_name}" in low or f"abrir {folder_name}" in low or f"abre la carpeta {folder_name}" in low:
@@ -747,6 +821,12 @@ async def serve_ui():
     if index_file.exists():
         return index_file.read_text(encoding="utf-8")
     return "<h1>UI file not found</h1>"
+
+
+@app.get("/api/telemetry")
+async def api_telemetry():
+    """Telemetría en vivo para el HUD de J.A.R.V.I.S. (CPU, RAM, Reactor Arc / Batería)."""
+    return get_realtime_telemetry()
 
 
 @app.get("/api/status")

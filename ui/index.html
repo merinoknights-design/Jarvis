@@ -355,6 +355,9 @@
       <span>J.A.R.V.I.S. // AUTONOMOUS CAD 3D & MULTIMODAL</span>
     </div>
     <div style="display:flex; gap:14px; align-items:center;">
+      <div class="status-pill" id="telemetryPill" title="Telemetría en vivo del Reactor Arc y estación">
+        ⚡ ARC: 100% | CPU: --% | RAM: --%
+      </div>
       <div class="status-pill">
         <div class="dot" id="ollamaDot"></div>
         <span id="modelLabel">NÚCLEO AUTÓNOMO ACTIVO</span>
@@ -380,12 +383,18 @@
     </div>
     <div class="state-label" id="stateLabel">MODELADO SÓLIDO CAD + ANALIZADOR MULTIMODAL LISTOS</div>
 
-    <div class="quick-tips">
+    <div class="quick-tips" style="max-width: 620px;">
       <div class="chip" onclick="sendMessage('Crea una brida en Solid Edge de diámetro 150 mm, espesor 16 mm, agujero central de 60 mm, 6 agujeros de 12 mm y redondeo de 3 mm')">⚙️ Modelar Brida con Pernos</div>
       <div class="chip" onclick="sendMessage('Crea un soporte en L en Solid Edge de largo 120 mm, alto 90 mm, ancho 70 mm, espesor 12 mm y redondeo de 3 mm')">📐 Modelar Soporte en L</div>
       <div class="chip" onclick="sendMessage('Crea una placa en Solid Edge de 200x140x20 mm con agujero central de 50 mm y 4 agujeros de 14 mm')">🔩 Modelar Placa Perforada</div>
       <div class="chip" onclick="sendMessage('Ensambla las piezas en Solid Edge')">🧩 Ensamblar Piezas (.ASM)</div>
       <div class="chip" onclick="document.getElementById('fileInput').click()">📄 Subir Plano PDF -> Pasar a 3D</div>
+      <div class="chip" onclick="sendMessage('Informe matutino')">🌅 Informe Matutino Stark</div>
+      <div class="chip" onclick="sendMessage('Diagnóstico completo')">⚡ Diagnóstico Mark LXXXV</div>
+      <div class="chip" onclick="sendMessage('Escanea mi pantalla')">👁️ Escaneo Táctico HUD</div>
+      <div class="chip" onclick="sendMessage('Protocolo Fiesta en Casa')">🎉 Protocolo Fiesta en Casa</div>
+      <div class="chip" onclick="sendMessage('Protocolo Pizarra Limpia')">🛡️ Protocolo Pizarra Limpia</div>
+      <div class="chip" onclick="sendMessage('Lee mis notas')">📓 Bitácora Stark</div>
     </div>
 
     <div class="drop-banner" onclick="document.getElementById('fileInput').click()">
@@ -660,6 +669,21 @@
 
     document.getElementById('reactor').addEventListener('click', toggleContinuousListen);
     loadStatus();
+
+    async function updateTelemetryHUD() {
+      try {
+        const res = await fetch('/api/telemetry');
+        if (res.ok) {
+          const t = await res.json();
+          const pill = document.getElementById('telemetryPill');
+          if (pill) {
+            pill.textContent = `⚡ ARC: ${t.arc_energy}% | CPU: ${t.cpu}% | RAM: ${t.ram_percent}%`;
+          }
+        }
+      } catch (e) {}
+    }
+    updateTelemetryHUD();
+    setInterval(updateTelemetryHUD, 3000);
 
     // Bucle en tiempo real que revisa las tareas en segundo plano de Jarvis y avisa por voz al terminar
     setInterval(async () => {
