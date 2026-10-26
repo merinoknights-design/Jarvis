@@ -13,3 +13,4 @@ faster-whisper
 av
 pyautogui
 pywinauto
+pyperclip
