@@ -102,50 +102,6 @@ async def ask_gemini_with_google_search(
     return None
 
 
-async def search_wikipedia_es(query: str) -> List[Dict[str, str]]:
-    """Busca conocimiento enciclopédico verificado en Wikipedia en Español."""
-    clean_q = re.sub(
-        r"^(?:qu[eé]\s+es|qui[eé]n\s+es|qui[eé]n\s+fue|háblame\s+de|hablame\s+de|busca\s+sobre|investiga\s+sobre|historia\s+de|dime\s+sobre)\s+",
-        "",
-        query.strip(),
-        flags=re.IGNORECASE,
-    ).strip(" ?¿!¡.")
-    if not clean_q or len(clean_q) < 2:
-        return []
-
-    results: List[Dict[str, str]] = []
-    headers = {"User-Agent": "JarvisSentientAI/2.0 (Windows; ES)"}
-    try:
-        async with httpx.AsyncClient(timeout=3.2, headers=headers) as client:
-            r = await client.get(
-                "https://es.wikipedia.org/w/api.php",
-                params={
-                    "action": "query",
-                    "list": "search",
-                    "srsearch": clean_q,
-                    "utf8": 1,
-                    "format": "json",
-                    "srlimit": 2,
-                },
-            )
-            if r.status_code == 200:
-                search_items = r.json().get("query", {}).get("search", [])
-                for item in search_items[:2]:
-                    title = item.get("title", "")
-                    if not title:
-                        continue
-                    sum_resp = await client.get(
-                        f"https://es.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
-                    )
-                    if sum_resp.status_code == 200:
-                        extract = (sum_resp.json().get("extract") or "").strip()
-                        if extract:
-                            results.append({"title": f"Wikipedia: {title}", "description": extract})
-    except Exception:
-        pass
-    return results
-
-
 async def search_brave_enriched(query: str, api_key: str = DEFAULT_BRAVE_KEY) -> List[Dict[str, str]]:
     """Consulta Brave Search Web con hasta 6 resultados limpios y detallados."""
     results: List[Dict[str, str]] = []
@@ -172,19 +128,11 @@ async def search_brave_enriched(query: str, api_key: str = DEFAULT_BRAVE_KEY) ->
 
 async def multi_source_deep_search(query: str, brave_key: str = DEFAULT_BRAVE_KEY) -> List[Dict[str, str]]:
     """
-    Combina en paralelo Wikipedia en Español + Brave Web Search enriquecido
-    para alimentar a Jarvis (y a Gemini/Ollama) con información profunda y verificada.
+    Búsqueda web en tiempo real con Brave Search (sin Wikipedia)
+    para alimentar a Jarvis (Gemini/Ollama) con información actual.
     """
-    wiki_task = asyncio.create_task(search_wikipedia_es(query))
-    brave_task = asyncio.create_task(search_brave_enriched(query, brave_key))
-    wiki_res, brave_res = await asyncio.gather(wiki_task, brave_task, return_exceptions=True)
-
-    combined: List[Dict[str, str]] = []
-    if isinstance(wiki_res, list):
-        combined.extend(wiki_res)
-    if isinstance(brave_res, list):
-        combined.extend(brave_res)
-    return combined[:6]
+    brave_res = await search_brave_enriched(query, brave_key)
+    return brave_res[:6] if isinstance(brave_res, list) else []
 
 
 def query_gemini_web_in_chrome(prompt_text: str) -> str:

@@ -895,7 +895,7 @@ async def get_status():
     return {
         "ollama_online": True,
         "gemini_connected": gem_active,
-        "active_model": "JARVIS + GEMINI SEARCH + CAD 3D" if gem_active else "JARVIS + DEEP SEARCH (WIKI/BRAVE) + CAD 3D",
+        "active_model": "JARVIS + GEMINI SEARCH + CAD 3D" if gem_active else "JARVIS + BRAVE SEARCH + CAD 3D",
         "mcps": mcps
     }
 
@@ -952,7 +952,7 @@ async def chat(request: Request):
         conversation_history.append({"role": "assistant", "content": instant["reply"]})
         return instant
 
-    # 2. CRITERIO PROPIO DE MEMORIA DE CONVERSACIÓN VS SUPER-BÚSQUEDA PROFUNDA (GEMINI + WIKIPEDIA ES + BRAVE)
+    # 2. CRITERIO PROPIO DE MEMORIA DE CONVERSACIÓN VS BÚSQUEDA WEB (GEMINI + BRAVE)
     conversational_self_words = [
         "necesito que", "criterio", "memoria", "estamos preguntando", "hablando", "conversación", "conversacion",
         "no lo veo", "otra vez", "todavía", "todavia", "david", "whatsapp", "mensaje", "chat", "rectifica",
@@ -1002,7 +1002,7 @@ async def chat(request: Request):
     extra_ctx = (
         action_memory_note
         + notes_context
-        + (f"\n\n[Fuentes verificadas en tiempo real (Wikipedia ES + Brave Web)]:\n{web_context}" if web_context else "")
+        + (f"\n\n[Fuentes web en tiempo real (Brave Search)]:\n{web_context}" if web_context else "")
     )
 
     # 2.1 Intentar primero con Google Gemini + Google Search Grounding si el usuario configuró su clave Gemini
@@ -1012,7 +1012,7 @@ async def chat(request: Request):
         conversation_history.append({"role": "assistant", "content": gemini_reply})
         return {"reply": gemini_reply, "tool_used": "brave-search" if should_query_web else "memory"}
 
-    # 2.2 Cerebro local Ollama enriquecido con Wikipedia ES + Brave Search
+    # 2.2 Cerebro local Ollama enriquecido con Brave Search
     model_online = await detect_best_model()
     if model_online:
         try:
