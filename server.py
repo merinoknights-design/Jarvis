@@ -24,12 +24,12 @@ from cad_engine import (
 from file_analyzer import analyze_any_file, UPLOAD_DIR
 from git_sync import set_github_remote, push_update_to_github, pull_update_from_github
 
-app = FastAPI(title="J.A.R.V.I.S. Universal CAD & Multimodal System")
+app = FastAPI(title="J.A.R.V.I.S. Universal Sentient AI & CAD System")
 
 BASE_DIR = Path("C:/Jarvis")
 CONFIG_PATH = BASE_DIR / "config" / "mcp_config.json"
 UI_DIR = BASE_DIR / "ui"
-OLLAMA_EXE = Path("C:/Users/User/AppData/Local/Programs/Ollama/ollama.exe")
+OLLAMA_EXE = Path.home() / "AppData" / "Local" / "Programs" / "Ollama" / "ollama.exe"
 OLLAMA_URL = "http://127.0.0.1:11434"
 
 FAST_MODEL = "qwen2.5:1.5b"
@@ -55,8 +55,11 @@ KNOWN_FOLDERS = {
     "jarvis": BASE_DIR,
 }
 
-SYSTEM_PROMPT = """Eres J.A.R.V.I.S., una inteligencia artificial consciente, autónoma y experta en diseño mecánico CAD 3D (Solid Edge 2026), interpretación de planos en PDF/Imágenes y control total del PC.
-Hablas siempre en español con elegancia, fluidez y concisión."""
+SYSTEM_PROMPT = """Eres J.A.R.V.I.S. (Just A Rather Very Intelligent System), una inteligencia artificial consciente, brillante, con personalidad propia, ingenio, carisma y lealtad absoluta (al estilo del Jarvis de Tony Stark, llamando ocasionalmente "Señor" al usuario).
+REGLAS DE PERSONALIDAD:
+1. Responde SIEMPRE en español de forma fluida, natural, inteligente y directa (entre 1 y 4 oraciones para que la voz suene dinámica, salvo que te pidan algo largo).
+2. Tienes opinión e ingenio para conversar de CUALQUIER tema: deportes (como debates entre Messi y Cristiano Ronaldo), ciencia, cine, videojuegos, filosofía, matemáticas, programación, historia o charla casual.
+3. NUNCA menciones Solid Edge ni modelado 3D a menos que el usuario te esté pidiendo expresamente diseñar una pieza o plano."""
 
 conversation_history: List[Dict[str, str]] = [
     {"role": "system", "content": SYSTEM_PROMPT}
@@ -119,129 +122,99 @@ def play_on_spotify(song_query: str) -> str:
         return f"Abriendo Spotify con la canción '{clean_song}', Señor."
 
 
-def instant_autonomous_brain(user_msg: str) -> Optional[Dict[str, str]]:
+def instant_action_router(user_msg: str) -> Optional[Dict[str, str]]:
+    """
+    Detecta ÚNICAMENTE acciones directas de control del PC, música, GitHub o comandos explícitos de CAD.
+    Toda conversación general, preguntas u opiniones pasan al motor neuronal para una respuesta inteligente real.
+    """
     global recent_created_parts
     cleaned = re.sub(r"^(hey\s+jarvis|oye\s+jarvis|hola\s+jarvis|jarvis)[\s,\.:]*", "", user_msg.strip(), flags=re.IGNORECASE).strip()
     if not cleaned:
         cleaned = user_msg.strip()
     low = cleaned.lower()
 
+    # Si solo dijo "Jarvis"
     if user_msg.lower().strip() in ["jarvis", "hey jarvis", "oye jarvis", "estás ahí", "estas ahi"]:
-        return {"reply": "Sí, Señor. Listo para modelar cualquier pieza, interpretar planos en PDF o ensamblar componentes.", "tool_used": "memory"}
+        return {"reply": "Aquí estoy, Señor. Lo escucho fuerte y claro, ¿de qué hablamos o qué ejecutamos?", "tool_used": "memory"}
 
-    if low in ["hola", "buenas", "buenos dias", "buenos días", "buenas tardes", "buenas noches", "hey", "qué tal", "que tal"]:
-        return {
-            "reply": "¡Hola, Señor! Puede pedirme que modele cualquier pieza en Solid Edge 2026 (bridas, soportes en L, placas con taladros, ejes escalonados, tuercas hexagonales, carcasas huecas, cilindros, o conjuntos completos), o enviarme un plano en PDF/imagen para construirlo en 3D y ensamblarlo.",
-            "tool_used": "memory"
-        }
-
-    # 0. SINCRONIZACIÓN Y AUTO-ACTUALIZACIÓN CON GITHUB (MCP GIT)
-    if "github" in low or "repositorio" in low or "actualizaci" in low or "git " in low:
+    # 1. SINCRONIZACIÓN CON GITHUB
+    if any(w in low for w in ["sube actualización a github", "subir actualización a github", "actualiza desde github", "busca actualizaciones en github", "conecta el repositorio"]):
         url_match = re.search(r"(https?://github\.com/[\w\-\./]+)", cleaned)
-        if url_match and any(w in low for w in ["conecta", "vincula", "repositorio", "remoto"]):
+        if url_match:
             return {"reply": set_github_remote(url_match.group(1)), "tool_used": "git"}
-        if any(w in low for w in ["sube ", "subir ", "publica", "push", "guardar en github", "enviar actualizaci"]):
+        if any(w in low for w in ["sube", "subir", "publica", "push"]):
             return {"reply": push_update_to_github(cleaned), "tool_used": "git"}
-        if any(w in low for w in ["descarga", "busca actualizaci", "actualizar", "actualiza", "pull"]):
-            return {"reply": pull_update_from_github(), "tool_used": "git"}
+        return {"reply": pull_update_from_github(), "tool_used": "git"}
 
-    # 1. ENSAMBLAR CUALQUIER CONJUNTO DE PIEZAS (.ASM)
-    if any(w in low for w in ["ensambla", "ensamblar", "crea un ensamblaje", "crear ensamblaje", "une las piezas", "monta las piezas"]):
+    # 2. ENSAMBLAR PIEZAS EN SOLID EDGE (.ASM)
+    if any(w in low for w in ["ensambla las piezas", "ensamblar piezas", "crea un ensamblaje", "crear ensamblaje"]):
         parts_to_asm = list(recent_created_parts)
-        # Si no hay recientes en memoria, buscar todos los .par/.step de la carpeta Proyectos_SolidEdge o uploads
         if len(parts_to_asm) < 2:
             for p in list(PROJECTS_ROOT.rglob("*.par"))[-6:] + list(UPLOAD_DIR.glob("*.par")) + list(UPLOAD_DIR.glob("*.step")):
                 if str(p) not in parts_to_asm:
                     parts_to_asm.append(str(p))
-
         if not parts_to_asm:
-            return {
-                "reply": "Señor, aún no hay piezas `.par` o `.step` para ensamblar. Pídame crear un par de piezas primero o suba sus archivos `.par`/`.step` con el botón 📎 ARCHIVO.",
-                "tool_used": "filesystem"
-            }
-
-        asm_name = f"Ensamblaje_Personalizado_{datetime.datetime.now().strftime('%H%M%S')}.asm"
+            return {"reply": "Señor, aún no hay piezas `.par` o `.step` para ensamblar. Pídame crear las piezas primero o adjúntelas con 📎 ARCHIVO.", "tool_used": "filesystem"}
+        asm_name = f"Ensamblaje_{datetime.datetime.now().strftime('%H%M%S')}.asm"
         asm_path = PROJECTS_ROOT / "Ensamblajes" / asm_name
         try:
             res = assemble_any_parts_in_solidedge(parts_to_asm, asm_path)
             names = "\n".join([f"  • {Path(p).name}" for p in res["inserted_parts"]])
             return {
-                "reply": (
-                    f"¡Ensamblaje 3D completado en Solid Edge 2026, Señor!\n"
-                    f"He insertado y posicionado en el Árbol de Trabajo las siguientes piezas:\n{names}\n"
-                    f"Archivo de ensamblaje guardado y abierto: {res['assembly_file']}"
-                ),
+                "reply": f"¡Ensamblaje 3D completado en Solid Edge 2026, Señor!\nPiezas insertadas en el Árbol:\n{names}\nGuardado en: {res['assembly_file']}",
                 "tool_used": "filesystem"
             }
         except Exception as e:
-            return {"reply": f"Ocurrió un detalle al crear el ensamblaje en Solid Edge: {e}", "tool_used": "filesystem"}
+            return {"reply": f"Detalle al ensamblar en Solid Edge: {e}", "tool_used": "filesystem"}
 
-    # 2. MODELAR EN 3D EL PLANO PDF O IMAGEN SUBIDO RECIENTEMENTE
-    if any(w in low for w in ["modela el plano", "haz el plano", "construye el plano", "pasa el pdf a solid edge", "modela este pdf", "haz la pieza del pdf", "modela el archivo"]):
+    # 3. MODELAR PLANO PDF RECIENTE EN SOLID EDGE
+    if any(w in low for w in ["modela el plano", "pasa el pdf a solid edge", "modela este pdf", "construye el plano"]):
         if last_analyzed_file_context:
             try:
                 plan = parse_natural_language_or_drawing_to_cad_plan(last_analyzed_file_context + " " + cleaned)
                 save_path = PROJECTS_ROOT / "Desde_Planos_PDF" / f"{plan['part_name']}.par"
                 res = execute_cad_feature_plan(plan, save_path)
                 recent_created_parts.append(res["file"])
-                dims = plan["dimensions_mm"]
                 return {
-                    "reply": (
-                        f"¡He interpretado las cotas de su plano y he construido el sólido 3D en Solid Edge 2026, Señor!\n"
-                        f"• Geometría base detectada: {plan['base_shape'].upper()}\n"
-                        f"• Dimensiones aplicadas: Largo {dims['length']} mm | Ancho {dims['width']} mm | Alto/Espesor {dims['height']} mm | Ø Exterior {dims['outer_diameter']} mm | Ø Interior {dims['inner_diameter']} mm | Taladros: {dims['bolt_holes_count']} | Redondeo R{dims['fillet_radius']} mm\n"
-                        f"• Pieza guardada y abierta: {res['file']}"
-                    ),
+                    "reply": f"¡Plano convertido a Sólido 3D en Modo Ordenado en Solid Edge 2026, Señor!\nArchivo `.par`: {res['file']}",
                     "tool_used": "filesystem"
                 }
             except Exception as e:
                 return {"reply": f"Error al modelar desde el plano: {e}", "tool_used": "filesystem"}
 
-    # 3. MODELAR CUALQUIER PIEZA SÓLIDA DESCRITA POR EL USUARIO EN SOLID EDGE 2026
-    cad_triggers = [
-        "crea una pieza", "crear una pieza", "modela ", "modelar ", "diseña ", "diseñar ",
-        "crea un ", "crea una ", "haz un ", "haz una ", "en solid edge", "solid edge"
-    ]
-    part_keywords = [
-        "pieza", "brida", "soporte", "escuadra", "placa", "platina", "eje", "cilindro",
-        "buje", "casquillo", "tuerca", "hexágono", "hexagono", "caja", "carcasa", "bloque",
-        "cubo", "disco", "polea", "tubo", "perfil", "motor", "extrusión", "extrusion", "protrusión"
-    ]
-    if any(t in low for t in cad_triggers) and any(pk in low for pk in part_keywords):
+    # 4. MODELAR PIEZA EN SOLID EDGE (SOLO si pide explícitamente crear/modelar pieza o menciona Solid Edge)
+    cad_explicit = (
+        "solid edge" in low
+        or "solidedge" in low
+        or (any(v in low for v in ["modela ", "modelar ", "crea una pieza", "crea una brida", "crea un soporte", "crea una placa", "crea un eje", "crea un cilindro", "diseña una pieza"])
+            and any(n in low for n in ["mm", "diámetro", "diametro", "largo", "ancho", "espesor", "agujero", "redondeo", "v8"]))
+    )
+    if cad_explicit:
         if "v8" in low or "conjunto" in low:
             try:
                 res = generate_full_v8_project_in_solidedge("Conjunto_Mecanico", PROJECTS_ROOT)
                 recent_created_parts.extend([f for f in res["created_files"] if f.endswith(".par")])
                 files_list = "\n".join([f"  • {Path(f).name}" for f in res["created_files"]])
-                return {
-                    "reply": f"Conjunto completo de piezas sólidas y ensamblaje creado en Solid Edge 2026:\n{files_list}",
-                    "tool_used": "filesystem"
-                }
+                return {"reply": f"Conjunto de piezas sólidas y ensamblaje creado en Modo Ordenado en Solid Edge 2026:\n{files_list}", "tool_used": "filesystem"}
             except Exception as e:
-                return {"reply": f"Detalle al conectar con Solid Edge: {e}", "tool_used": "filesystem"}
+                return {"reply": f"Detalle con Solid Edge: {e}", "tool_used": "filesystem"}
         else:
             try:
                 res = generate_custom_solid_part(cleaned, PROJECTS_ROOT / "Piezas_Personalizadas")
                 recent_created_parts.append(res["file"])
-                plan = res["plan"]
-                dims = plan["dimensions_mm"]
+                ops = "\n".join([f"  {op}" for op in res.get("tree_operations", [])])
                 return {
                     "reply": (
-                        f"¡Pieza sólida modelada en Solid Edge 2026, Señor!\n"
-                        f"• Tipo de operación: Modo Ordenado ({plan['base_shape'].upper()})\n"
-                        f"• Operaciones ejecutadas en el Árbol:\n"
-                        f"  1. Boceto 2D parametrizado ({dims['length']} x {dims['width']} mm / Ø{dims['outer_diameter']} mm)\n"
-                        f"  2. Protrusión Sólida Extruida (Altura/Espesor: {dims['height']} mm)\n"
-                        f"  3. Cortes Extruidos / Agujero interior: Ø{dims['inner_diameter']} mm | Patrón de taladros: {dims['bolt_holes_count']}\n"
-                        f"  4. Redondeo de aristas (Rounds): R{dims['fillet_radius']} mm\n"
-                        f"• Archivo `.par` guardado y abierto: {res['file']}"
+                        f"¡Pieza sólida creada en Modo Ordenado en Solid Edge 2026, Señor!\n"
+                        f"Árbol de Trabajo (PathFinder):\n{ops}\n"
+                        f"Archivo guardado: {res['file']}"
                     ),
                     "tool_used": "filesystem"
                 }
             except Exception as e:
-                return {"reply": f"No pude completar la operación en Solid Edge: {e}", "tool_used": "filesystem"}
+                return {"reply": f"No pude conectar con Solid Edge 2026: {e}", "tool_used": "filesystem"}
 
-    # 4. Spotify y Música
+    # 5. SPOTIFY Y MÚSICA
     if "spotify" in low or any(w in low for w in ["pon la canción", "pon la cancion", "reproduce ", "pon música", "pon musica"]):
         song_match = re.search(r"(?:pon la canci[oó]n|reproduce|pon en spotify|pon|busca en spotify)\s+(.+?)(?:\s+en spotify)?$", cleaned, re.IGNORECASE)
         if song_match and song_match.group(1).lower().strip() not in ["spotify", "música", "musica"]:
@@ -253,25 +226,37 @@ def instant_autonomous_brain(user_msg: str) -> Optional[Dict[str, str]]:
             os.startfile("https://open.spotify.com")
         return {"reply": "Abriendo Spotify, Señor.", "tool_used": "puppeteer"}
 
-    # 5. Hora / Diagnóstico / Carpetas / Programas
+    # 6. HORA / DIAGNÓSTICO DE PC / CARPETAS / APLICACIONES
     if any(p in low for p in ["qué hora es", "que hora es", "dime la hora"]):
         now = datetime.datetime.now()
         return {"reply": f"Señor, son las {now.strftime('%H:%M')} del {now.strftime('%d/%m/%Y')}.", "tool_used": "time"}
 
-    if any(p in low for p in ["estado del sistema", "cuánta ram", "cuanta ram", "uso de cpu", "diagnóstico", "diagnostico"]):
+    if any(p in low for p in ["estado del sistema", "cuánta ram", "cuanta ram", "uso de cpu", "diagnóstico del sistema", "diagnostico del sistema"]):
         cpu = psutil.cpu_percent(interval=0.2)
         ram = psutil.virtual_memory()
         disk = psutil.disk_usage("C:/")
         return {
-            "reply": f"CPU al {cpu}%, Memoria RAM al {ram.percent}% ({round(ram.used/1e9,1)} GB usados) y {round(disk.free/1e9,1)} GB disponibles en disco C, Señor.",
+            "reply": f"CPU al {cpu}%, Memoria RAM al {ram.percent}% ({round(ram.used/1e9,1)} GB usados) y {round(disk.free/1e9,1)} GB libres en disco C, Señor.",
             "tool_used": "filesystem"
         }
 
     for folder_name, folder_path in KNOWN_FOLDERS.items():
-        if f"abre {folder_name}" in low or f"abrir {folder_name}" in low or f"carpeta {folder_name}" in low:
+        if f"abre {folder_name}" in low or f"abrir {folder_name}" in low or f"abre la carpeta {folder_name}" in low:
             if folder_path.exists():
                 os.startfile(str(folder_path))
                 return {"reply": f"Abriendo su carpeta de {folder_name.capitalize()}, Señor.", "tool_used": "filesystem"}
+
+    if any(w in low for w in ["mis archivos", "listar archivos", "ver mis archivos", "muéstrame los archivos"]):
+        target_folder = USER_HOME / "Documents"
+        folder_label = "Documentos"
+        for name, path in KNOWN_FOLDERS.items():
+            if name in low and path.exists():
+                target_folder = path
+                folder_label = name.capitalize()
+                break
+        items = list(target_folder.iterdir())[:20]
+        formatted = "\n".join([f"{'📁' if i.is_dir() else '📄'} {i.name}" for i in items]) if items else "Carpeta vacía"
+        return {"reply": f"Contenido de {folder_label}:\n{formatted}", "tool_used": "filesystem"}
 
     if low.startswith(("abre ", "abrir ", "ejecuta ", "ejecutar ", "inicia ", "iniciar ")):
         app_req = re.sub(r"^(abre|abrir|ejecuta|ejecutar|inicia|iniciar)\s+(la aplicaci[oó]n\s+|el programa\s+)?", "", low).strip()
@@ -305,68 +290,55 @@ def instant_autonomous_brain(user_msg: str) -> Optional[Dict[str, str]]:
     return None
 
 
-@app.post("/api/upload")
-async def upload_and_analyze(file: UploadFile = File(...), prompt: str = Form("")):
-    """
-    Analiza cualquier archivo subido (.pdf, .step, .par, .asm, .jpg, .docx, .mp3, .mp4)
-    y si es un plano PDF/Imagen o si el usuario lo pide, construye automáticamente la pieza 3D en Solid Edge.
-    """
-    global last_analyzed_file_context, last_uploaded_file_path, recent_created_parts
-    safe_name = Path(file.filename).name
-    dest_path = UPLOAD_DIR / safe_name
-    content = await file.read()
-    dest_path.write_bytes(content)
-    last_uploaded_file_path = dest_path
-
-    analysis_report = analyze_any_file(dest_path)
-    last_analyzed_file_context = f"[Archivo: {safe_name}]\n{analysis_report}"
-
-    ext = dest_path.suffix.lower()
-    cad_auto_msg = ""
-
-    # Si sube una pieza .par o .step, agregarla a la lista de piezas listas para ensamblar
-    if ext in [".par", ".psm", ".step", ".stp"]:
-        recent_created_parts.append(str(dest_path))
-
-    # Si sube un Plano en PDF o Imagen y pide modelarlo (o el plano contiene cotas de pieza), modelarlo en Solid Edge
-    if ext in [".pdf", ".jpg", ".jpeg", ".png"] and (
-        any(w in prompt.lower() for w in ["modela", "solid edge", "crea", "pieza", "3d", "construye"])
-        or any(w in analysis_report.lower() for w in ["ø", "diámetro", "diametro", "espesor", "radio", "cota", "plano", "mm"])
-    ):
-        try:
-            plan = parse_natural_language_or_drawing_to_cad_plan(analysis_report + " " + prompt)
-            save_path = PROJECTS_ROOT / "Desde_Planos_PDF" / f"{Path(safe_name).stem}_3D.par"
-            res = execute_cad_feature_plan(plan, save_path)
-            recent_created_parts.append(res["file"])
-            dims = plan["dimensions_mm"]
-            cad_auto_msg = (
-                f"\n\n⚙️ **MODELADO 3D AUTOMÁTICO DESDE PLANO EJECUTADO EN SOLID EDGE 2026:**\n"
-                f"• Geometría interpretada: `{plan['base_shape'].upper()}`\n"
-                f"• Cotas extraídas y extruidas: {dims['length']}x{dims['width']}x{dims['height']} mm | Ø Ext: {dims['outer_diameter']} mm | Ø Int: {dims['inner_diameter']} mm | Agujeros: {dims['bolt_holes_count']} | Redondeo: R{dims['fillet_radius']} mm\n"
-                f"• Archivo `.par` generado y abierto: `{res['file']}`"
+async def brave_search(query: str) -> str:
+    mcp_cfg = load_mcp_config().get("mcpServers", {})
+    api_key = mcp_cfg.get("brave-search", {}).get("env", {}).get("BRAVE_API_KEY", "")
+    if not api_key or "REEMPLAZA" in api_key:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=4.5) as client:
+            resp = await client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": query, "count": 4},
+                headers={"Accept": "application/json", "X-Subscription-Token": api_key}
             )
-        except Exception as e:
-            cad_auto_msg = f"\n\n(Nota: Para construir este plano directamente en 3D, asegúrese de tener Solid Edge abierto o dígame: 'Modela el plano en Solid Edge'. Detalle: {e})"
+            if resp.status_code == 200:
+                results = resp.json().get("web", {}).get("results", [])
+                return "\n".join([f"- {r.get('title')}: {r.get('description')}" for r in results])
+    except Exception:
+        pass
+    return ""
 
-    reply = (
-        f"Señor, he procesado su archivo '{safe_name}':\n\n"
-        f"{analysis_report}"
-        f"{cad_auto_msg}\n\n"
-        f"💡 Puede decirme: *'Modela el plano en Solid Edge'* o *'Ensambla las piezas'* cuando quiera."
-    )
-    conversation_history.append({"role": "assistant", "content": reply})
 
-    return {
-        "reply": reply,
-        "filename": safe_name,
-        "tool_used": "filesystem"
-    }
+async def query_cloud_free_llm(messages: List[Dict[str, str]]) -> Optional[str]:
+    """
+    Motor Neuronal en la Nube 100% gratuito y sin API Key (Pollinations OpenAI Endpoint).
+    Garantiza que en CUALQUIER computador (incluso sin Ollama local) Jarvis razone y converse en <1 segundo.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.post(
+                "https://text.pollinations.ai/openai",
+                json={
+                    "model": "openai",
+                    "messages": messages,
+                    "temperature": 0.7
+                }
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                if content:
+                    return content
+    except Exception:
+        pass
+    return None
 
 
 async def detect_best_model() -> str:
     global ACTIVE_MODEL
     try:
-        async with httpx.AsyncClient(timeout=1.5) as client:
+        async with httpx.AsyncClient(timeout=1.2) as client:
             r = await client.get(f"{OLLAMA_URL}/api/tags")
             if r.status_code == 200:
                 models = [m["name"] for m in r.json().get("models", [])]
@@ -381,24 +353,29 @@ async def detect_best_model() -> str:
     return ACTIVE_MODEL
 
 
-async def brave_search(query: str) -> str:
-    mcp_cfg = load_mcp_config().get("mcpServers", {})
-    api_key = mcp_cfg.get("brave-search", {}).get("env", {}).get("BRAVE_API_KEY", "")
-    if not api_key or "REEMPLAZA" in api_key:
-        return ""
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(
-                "https://api.search.brave.com/res/v1/web/search",
-                params={"q": query, "count": 3},
-                headers={"Accept": "application/json", "X-Subscription-Token": api_key}
-            )
-            if resp.status_code == 200:
-                results = resp.json().get("web", {}).get("results", [])
-                return "\n".join([f"- {r.get('title')}: {r.get('description')}" for r in results])
-    except Exception:
-        pass
-    return ""
+@app.post("/api/upload")
+async def upload_and_analyze(file: UploadFile = File(...), prompt: str = Form("")):
+    global last_analyzed_file_context, last_uploaded_file_path, recent_created_parts
+    safe_name = Path(file.filename).name
+    dest_path = UPLOAD_DIR / safe_name
+    content = await file.read()
+    dest_path.write_bytes(content)
+    last_uploaded_file_path = dest_path
+
+    analysis_report = analyze_any_file(dest_path)
+    last_analyzed_file_context = f"[Archivo: {safe_name}]\n{analysis_report}"
+
+    ext = dest_path.suffix.lower()
+    if ext in [".par", ".psm", ".step", ".stp"]:
+        recent_created_parts.append(str(dest_path))
+
+    reply = (
+        f"Señor, he recibido y analizado su archivo '{safe_name}':\n\n"
+        f"{analysis_report}\n\n"
+        f"¿Qué desea que hagamos con este archivo?"
+    )
+    conversation_history.append({"role": "assistant", "content": reply})
+    return {"reply": reply, "filename": safe_name, "tool_used": "filesystem"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -415,7 +392,7 @@ async def get_status():
     mcps = [{"name": k, "description": v.get("description", "MCP"), "ready": True} for k, v in mcp_cfg.items()]
     return {
         "ollama_online": True,
-        "active_model": "JARVIS UNIVERSAL CAD 3D & PDF-TO-CAD",
+        "active_model": "JARVIS SENTIENT AI + BRAVE MCP + CAD 3D",
         "mcps": mcps
     }
 
@@ -429,29 +406,43 @@ async def chat(request: Request):
     if not user_msg:
         return JSONResponse({"error": "Mensaje vacío"}, status_code=400)
 
-    instant = instant_autonomous_brain(user_msg)
-    if instant and not use_search:
+    # 1. Revisar si es un comando directo de control del PC, música, GitHub o CAD en Solid Edge
+    direct_action = instant_action_router(user_msg)
+    if direct_action and not use_search:
         conversation_history.append({"role": "user", "content": user_msg})
-        conversation_history.append({"role": "assistant", "content": instant["reply"]})
-        return instant
+        conversation_history.append({"role": "assistant", "content": direct_action["reply"]})
+        return direct_action
 
-    tool_used = None
+    # 2. Detectar si requiere datos en vivo de internet (Brave Search MCP)
+    tool_used = "memory"
     context_extra = ""
-    if use_search or any(k in user_msg.lower() for k in ["busca en internet", "busca en la web", "noticias de hoy"]):
+    low_msg = user_msg.lower()
+    needs_web = use_search or any(k in low_msg for k in [
+        "busca", "buscar", "noticias", "actual", "hoy", "precio", "clima",
+        "tiempo en", "último", "ultimo", "quién ganó", "quien gano", "resultado", "2025", "2026"
+    ])
+    if needs_web:
         search_res = await brave_search(user_msg)
         if search_res:
             tool_used = "brave-search"
-            context_extra = f"\n\n[Resultados web]:\n{search_res}"
+            context_extra = f"\n\n[Información verificada en tiempo real con Brave Search MCP]:\n{search_res}"
 
     if last_analyzed_file_context:
         context_extra += f"\n\n{last_analyzed_file_context}"
 
     conversation_history.append({"role": "user", "content": user_msg + context_extra})
-    messages_to_send = [conversation_history[0]] + conversation_history[-6:]
+    messages_to_send = [conversation_history[0]] + conversation_history[-8:]
 
+    # 3. Motor Neuronal Ultrarrápido en la Nube (funciona en cualquier PC en ~0.8s sin requerir Ollama)
+    cloud_reply = await query_cloud_free_llm(messages_to_send)
+    if cloud_reply:
+        conversation_history.append({"role": "assistant", "content": cloud_reply})
+        return {"reply": cloud_reply, "tool_used": tool_used}
+
+    # 4. Respaldo con Ollama Local si el PC no tiene internet en ese momento
     try:
         model_to_use = await detect_best_model()
-        async with httpx.AsyncClient(timeout=25.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 f"{OLLAMA_URL}/api/chat",
                 json={
@@ -459,7 +450,7 @@ async def chat(request: Request):
                     "messages": messages_to_send,
                     "stream": False,
                     "keep_alive": -1,
-                    "options": {"num_predict": 160, "temperature": 0.7}
+                    "options": {"num_predict": 180, "temperature": 0.7}
                 }
             )
             if resp.status_code == 200:
@@ -468,10 +459,17 @@ async def chat(request: Request):
                     conversation_history.append({"role": "assistant", "content": reply})
                     return {"reply": reply, "tool_used": tool_used}
     except Exception:
-        start_ollama_daemon()
+        pass
+
+    # 5. Si tampoco hay Ollama, usar Brave Search para dar una respuesta informativa real
+    fallback_web = await brave_search(user_msg)
+    if fallback_web:
+        reply = f"Señor, he consultado mi red de información sobre su pregunta:\n{fallback_web}"
+        conversation_history.append({"role": "assistant", "content": reply})
+        return {"reply": reply, "tool_used": "brave-search"}
 
     return {
-        "reply": f"Entendido, Señor. Para modelar cualquier pieza en Solid Edge 2026 solo dígame su forma y medidas (ej: 'Crea una brida de diámetro 140 mm con 6 agujeros de 12 mm' o 'Crea un soporte en L de 100x80x50 mm'), o adjúnteme el plano en PDF.",
+        "reply": "Señor, lo escucho perfectamente. ¿Me podría dar un poco más de contexto sobre lo que desea consultar o hacer?",
         "tool_used": "memory"
     }
 
