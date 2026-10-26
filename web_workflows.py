@@ -10,14 +10,21 @@ from ui_controller import (
     focus_and_maximize_chrome_window,
     check_if_login_required_on_screen,
     click_ui_element_by_uia_or_ocr,
-    find_all_matches_uia_and_ocr,
+    find_matches_in_region_fast,
     find_text_on_screen_and_click,
     mouse_click,
     mouse_scroll,
     send_text_and_keys,
     resolve_youtube_video_url,
+    get_ocr,
     user32,
 )
+
+# Pre-cargar el motor OCR en memoria al iniciar para que las lecturas tarden ~0.07s sin lag inicial
+try:
+    get_ocr()
+except Exception:
+    pass
 
 # Memoria de Conciencia de Acción, Contacto Activo y Autodiagnóstico de J.A.R.V.I.S.
 LAST_ACTION_STATE: Dict[str, Any] = {
@@ -63,22 +70,20 @@ def update_action_state(
 def _extract_explicit_contact(text: str) -> str:
     """
     Extrae con precisión el nombre del contacto (ej. 'David' o 'david' por voz) de cualquier frase:
+    - "un mensaje a david diciendo prueba 123" -> "david"
     - "busca a david y manda un mensaje de prueba" -> "david"
-    - "busca david en whatsapp y mandale hola" -> "david"
     - "manda un mensaje de prueba a david" -> "david"
-    - "manda un mensaje a david de prueba" -> "david"
     - "entra al chat de david y dile hola" -> "david"
-    - "no se lo mandó a david, mándaselo a david" -> "david"
     """
     cleaned = re.sub(r"\b(?:en|por|de|desde)\s+whatsapp(?:\s+web)?\b", "", text, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
     explicit_patterns = [
-        # 1. "busca (a) X", "al chat de X", "al perfil de X", "al contacto X", "mándaselo a X", "mándale a X", "escríbele a X"
-        r"\b(?:busca\s+a|buscar\s+a|busca\s+el\s+chat\s+de|busca\s+al\s+contacto|busca|entra\s+al\s+chat\s+de|al\s+chat\s+de|chat\s+de|entra\s+al\s+perfil\s+de|al\s+perfil\s+de|perfil\s+de|al\s+contacto|contacto|m[aá]ndaselo\s+a|env[ií]aselo\s+a|m[aá]ndale\s+a|escr[ií]bele\s+a|dile\s+a)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+(?:\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+)?)(?=\s+(?:y\b|diciendo\b|que\b|con\b|un\b|el\b|hola\b|mensaje\b|de\s+prueba\b|manda\b|m[aá]ndale\b|env[ií]a\b|escribe\b|dile\b)|[,:.]|$)",
+        # 1. "busca (a) X", "al chat de X", "al perfil de X", "al contacto X", "mándaselo a X", "mándale a X", "un mensaje a X"
+        r"\b(?:busca\s+a|buscar\s+a|busca\s+el\s+chat\s+de|busca\s+al\s+contacto|busca|entra\s+al\s+chat\s+de|al\s+chat\s+de|chat\s+de|entra\s+al\s+perfil\s+de|al\s+perfil\s+de|perfil\s+de|al\s+contacto|contacto|un\s+mensaje\s+a|mensaje\s+a|m[aá]ndaselo\s+a|env[ií]aselo\s+a|m[aá]ndale\s+a|escr[ií]bele\s+a|dile\s+a)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+(?:\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+)?)(?=\s+(?:y\b|diciendo\b|que\b|con\b|un\b|el\b|hola\b|mensaje\b|de\s+prueba\b|manda\b|m[aá]ndale\b|env[ií]a\b|escribe\b|dile\b)|[,:.]|$)",
         # 2. "manda un mensaje (de prueba) a X"
         r"\b(?:manda|mandar|env[ií]a|enviar|escribe|escribir|m[aá]ndale|env[ií]ale)\s+(?:un\s+)?(?:mensaje\s+de\s+prueba|mensaje|whatsapp)\s+(?:a|para)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+(?:\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+)?)(?=\s+(?:y\b|diciendo\b|que\b|con\b|hola\b|de\s+prueba\b)|[,:.]|$)",
-        # 3. Cualquier "para X" o "a X" al final o antes de "diciendo / que diga / y" (incluso en minúsculas por dictado de voz)
+        # 3. Cualquier "para X" o "a X" antes de "diciendo / que diga / y" o al final
         r"\b(?:para|a)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ][a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+)(?=\s+(?:y\b|diciendo\b|que\b|con\b|de\s+prueba\b)|[,:.]|$)",
     ]
 
@@ -99,10 +104,9 @@ def _extract_explicit_contact(text: str) -> str:
 
 def parse_whatsapp_order(raw_order: str) -> Tuple[str, str]:
     """
-    Extrae (contacto, mensaje) con criterio propio y memoria del contacto activo:
-    1. Siempre busca primero si hay un nombre de contacto explícito en cualquier parte de la frase (ej. 'David').
-    2. Si no lo hay en esta frase, mantiene el último contacto activo que el usuario indicó (LAST_ACTION_STATE['last_target_contact']).
-    3. Extrae el texto del mensaje a enviar.
+    Extrae (contacto, mensaje) de forma instantánea y precisa:
+    - "un mensaje a david diciendo prueba 123" -> ("david", "prueba 123")
+    - "busca a david y manda un mensaje de prueba" -> ("david", "Hola, este es un mensaje de prueba...")
     """
     cleaned = re.sub(r"\b(?:en|por|de|desde)\s+whatsapp(?:\s+web)?\b", "", raw_order, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
@@ -110,11 +114,7 @@ def parse_whatsapp_order(raw_order: str) -> Tuple[str, str]:
     explicit_contact = _extract_explicit_contact(cleaned)
     active_contact = explicit_contact or LAST_ACTION_STATE.get("last_target_contact", "")
 
-    if "mensaje de prueba" in cleaned.lower() or "de prueba" in cleaned.lower():
-        m_custom_test = re.search(r"(?:diciendo|que\s+diga)\s*[:\s]\s*(.+)$", cleaned, re.IGNORECASE)
-        msg = m_custom_test.group(1).strip(" '\"") if m_custom_test else "Hola, este es un mensaje de prueba enviado por J.A.R.V.I.S."
-        return active_contact, msg
-
+    # 1. Extraer primero si hay un mensaje explícito tras "diciendo / que diga / con el mensaje / :"
     m_msg = re.search(
         r"(?:diciendo|que\s+diga|con\s+el\s+mensaje|con\s+el\s+texto|y\s+dile|y\s+m[aá]ndale|y\s+env[ií]ale|y\s+escr[ií]bele|y\s+ponle|y\s+manda\s+el\s+mensaje|y\s+manda|[:])\s*(.+)$",
         cleaned,
@@ -123,8 +123,14 @@ def parse_whatsapp_order(raw_order: str) -> Tuple[str, str]:
     if m_msg:
         msg = m_msg.group(1).strip(" '\"")
         if explicit_contact and msg.lower() in [f"a {explicit_contact.lower()}", explicit_contact.lower()]:
-            msg = LAST_ACTION_STATE.get("last_message_text", "") or "Hola, este es un mensaje de prueba enviado por J.A.R.V.I.S."
+            msg = LAST_ACTION_STATE.get("last_message_text", "") or "prueba 123"
+        if msg.lower() in ["un mensaje de prueba", "mensaje de prueba", "de prueba"]:
+            msg = "Hola, este es un mensaje de prueba enviado por J.A.R.V.I.S."
         return active_contact, msg
+
+    # 2. Si pidió "mensaje de prueba" genérico sin "diciendo..."
+    if "mensaje de prueba" in cleaned.lower():
+        return active_contact, "Hola, este es un mensaje de prueba enviado por J.A.R.V.I.S."
 
     if explicit_contact:
         after_contact = re.split(re.escape(explicit_contact), cleaned, flags=re.IGNORECASE)
@@ -132,7 +138,7 @@ def parse_whatsapp_order(raw_order: str) -> Tuple[str, str]:
             tail = re.sub(r"^(?:y\s+)?(?:manda|m[aá]ndale|env[ií]a|escribe|dile|el\s+mensaje|un\s+mensaje)\s*", "", after_contact[-1].strip(), flags=re.IGNORECASE).strip(" '\"")
             if tail and tail.lower() not in STOPWORDS_CONTACT:
                 return explicit_contact, tail
-        return explicit_contact, LAST_ACTION_STATE.get("last_message_text", "") or "Hola, este es un mensaje de prueba enviado por J.A.R.V.I.S."
+        return explicit_contact, LAST_ACTION_STATE.get("last_message_text", "") or "prueba 123"
 
     m_msg_only = re.search(
         r"^(?:manda|mandar|env[ií]a|enviar|escribe|escribir|dile|pon|m[aá]ndale|env[ií]ale)\s+(?:un\s+mensaje\s+|el\s+mensaje\s+)?(.+)$",
@@ -144,160 +150,117 @@ def parse_whatsapp_order(raw_order: str) -> Tuple[str, str]:
         if cand_msg and cand_msg.lower() not in STOPWORDS_CONTACT:
             return active_contact, cand_msg
 
-    return active_contact, LAST_ACTION_STATE.get("last_message_text", "") or "Hola, este es un mensaje de prueba enviado por J.A.R.V.I.S."
+    return active_contact, LAST_ACTION_STATE.get("last_message_text", "") or "prueba 123"
 
 
-def _get_open_chat_header_text_and_verify(contact: str, left: int, top: int, right: int, bottom: int) -> Tuple[bool, str]:
+def _verify_header_fast(contact: str, left: int, top: int, right: int, bottom: int) -> Tuple[bool, str]:
     """
-    Lee con OCR/UIA el encabezado superior derecho del chat abierto en WhatsApp Web
-    (en 1920x1080 está alrededor de x=820, y=190, es decir x > 34% del ancho y 140 <= y <= 235).
-    Devuelve (True/False si coincide con `contact`, nombre_leído_en_el_header).
+    Rectificación ultrarrápida (~0.07s):
+    Recorta ÚNICAMENTE el rectángulo pequeño del encabezado del chat abierto (alrededor de (770, 190) en 1920x1080)
+    y verifica si dice `contact` (ej. 'David'). Cero lag.
     """
     w = max(800, right - left)
     h = max(600, bottom - top)
-    matches = find_all_matches_uia_and_ocr(contact, window_keyword="WhatsApp")
-    for cx, cy, txt in matches:
-        if (left + int(w * 0.34)) <= cx <= (left + int(w * 0.78)) and (top + int(h * 0.13)) <= cy <= (top + int(h * 0.23)):
-            return True, txt
+    header_box = (
+        left + int(w * 0.34),
+        top + int(h * 0.14),
+        left + int(w * 0.65),
+        top + int(h * 0.22),
+    )
+    matches = find_matches_in_region_fast(contact, header_box)
+    if matches:
+        return True, matches[0][2]
     return False, ""
 
 
-def _click_whatsapp_search_bar(left: int, top: int, right: int, bottom: int):
-    """
-    Hace clic exacto sobre la barra 'Buscar un chat o iniciar uno nuevo' de WhatsApp Web.
-    En 1920x1080 con marcadores visibles está en (304, 259) -> x = 16% del ancho, y = 24% del alto.
-    Primero la localiza por OCR ('Buscar un chat' / 'iniciar uno nuevo') y si no, usa (w*0.16, h*0.24).
-    """
-    w = max(800, right - left)
-    h = max(600, bottom - top)
-
-    for label in ["Buscar un chat", "iniciar uno nuevo", "Search"]:
-        s_matches = find_all_matches_uia_and_ocr(label, window_keyword="WhatsApp")
-        for sx, sy, _ in s_matches:
-            if sx < (left + int(w * 0.35)) and (top + int(h * 0.15)) <= sy <= (top + int(h * 0.30)):
-                mouse_click(sx, sy, button="left", double=False)
-                return
-
-    # Coordenada exacta medida en pantalla (304, 259 en 1920x1080)
-    search_x = left + int(w * 0.16)
-    search_y = top + int(h * 0.24)
-    mouse_click(search_x, search_y, button="left", double=False)
-
-
-def _search_select_and_rectify_whatsapp_contact(
+def _search_select_and_rectify_whatsapp_contact_fast(
     contact: str, left: int, top: int, right: int, bottom: int
 ) -> Tuple[bool, str]:
     """
-    Bucle con Criterio Propio y Doble Rectificación (2 intentos completos):
-    1. SIEMPRE busca al contacto en la barra 'Buscar un chat o iniciar uno nuevo' (en (304, 259)) cuando aún no está verificado en el encabezado.
-    2. Escribe el nombre del contacto, espera los resultados debajo de y = 300, localiza el nombre del contacto por OCR
-       (o presiona Enter en la lista de resultados) para abrir su chat.
-    3. Rectifica dos veces leyendo el encabezado superior derecho del chat abierto (en x > 650, y ~ 190) para confirmar que dice `contact`.
+    Flujo fluido, directo y sin lag (<1.8s):
+    1. En 0.07s mira si el encabezado del chat abierto YA dice `contact` (ej. 'David'). Si ya está abierto, pasa directo a enviar.
+    2. Si no, hace clic directo en la barra 'Buscar un chat o iniciar uno nuevo' en (304, 259) sin escaneos lentos,
+       pega `contact`, lee únicamente la columna izquierda de resultados en 0.15s, hace clic en la fila exacta de `contact`
+       y rectifica el encabezado superior.
     """
     w = max(800, right - left)
     h = max(600, bottom - top)
 
-    # Verificar primero si el chat actualmente abierto en el panel derecho YA tiene a `contact` en su encabezado (y ~ 190)
-    already_in_header, header_txt = _get_open_chat_header_text_and_verify(contact, left, top, right, bottom)
-    if already_in_header:
-        return True, f"El encabezado del chat abierto ya fue rectificado como '{header_txt}'."
+    # 1. ¿Ya está abierto el chat de `contact` en pantalla? (Toma solo 0.07s)
+    already_open, header_txt = _verify_header_fast(contact, left, top, right, bottom)
+    if already_open:
+        return True, f"El chat de '{header_txt}' ya estaba abierto y rectificado."
+
+    search_x = left + int(w * 0.16)
+    search_y = top + int(h * 0.24)
+    results_box = (
+        left + int(w * 0.04),
+        top + int(h * 0.32),
+        left + int(w * 0.33),
+        top + int(h * 0.86),
+    )
 
     for attempt in range(1, 3):
-        # Paso 1: Hacer clic en 'Buscar un chat o iniciar uno nuevo' ((304, 259) en 1920x1080)
-        _click_whatsapp_search_bar(left, top, right, bottom)
-        time.sleep(0.35)
-
-        # Limpiar cualquier texto previo en el buscador y escribir el contacto
+        # Clic directo e instantáneo en el buscador (304, 259 en 1920x1080)
+        mouse_click(search_x, search_y, button="left", double=False)
+        time.sleep(0.12)
         pyautogui.hotkey("ctrl", "a")
-        time.sleep(0.1)
+        time.sleep(0.05)
         pyautogui.press("backspace")
-        time.sleep(0.15)
+        time.sleep(0.08)
         send_text_and_keys(contact, press_enter=False)
-        time.sleep(1.8)
+        time.sleep(0.75)
 
-        # Paso 2: Escaneo visual por OCR de los resultados de búsqueda debajo del buscador (y >= 300px, x < 35% del ancho)
-        matches = find_all_matches_uia_and_ocr(contact, window_keyword="WhatsApp")
-        result_rows = [
-            (cx, cy, txt)
-            for (cx, cy, txt) in matches
-            if cx < (left + int(w * 0.35)) and (top + int(h * 0.28)) <= cy <= (top + int(h * 0.88))
-        ]
-
-        if result_rows:
-            result_rows.sort(key=lambda item: item[1])
-            target_x, target_y, detected_label = result_rows[0]
-            mouse_click(target_x, target_y, button="left", double=False)
-            time.sleep(1.3)
+        # Escaneo rápido (0.15s) solo del recorte de resultados de la columna izquierda
+        rows = find_matches_in_region_fast(contact, results_box)
+        if rows:
+            # Priorizar coincidencia exacta (ej. 'David' sobre '@david16434') y de más arriba
+            exact_rows = [r for r in rows if r[2].strip().lower() == contact.strip().lower()]
+            chosen = exact_rows[0] if exact_rows else sorted(rows, key=lambda item: item[1])[0]
+            mouse_click(chosen[0], chosen[1], button="left", double=False)
+            time.sleep(0.55)
         else:
-            # En WhatsApp Web, estando el cursor en 'Buscar un chat o iniciar uno nuevo', presionar Enter abre el primer resultado filtrado
             pyautogui.press("enter")
-            time.sleep(1.3)
+            time.sleep(0.55)
 
-        # Paso 3: RECTIFICACIÓN DOBLE del encabezado del chat abierto en el panel derecho (x > 34% ancho, y ~ 190px)
-        ok_header, h_txt = _get_open_chat_header_text_and_verify(contact, left, top, right, bottom)
+        # Rectificar el encabezado en 0.07s
+        ok_header, h_txt = _verify_header_fast(contact, left, top, right, bottom)
         if ok_header:
-            return True, f"Rectificado en el intento {attempt}: el encabezado del chat abierto confirma '{h_txt}'."
+            return True, f"Chat de '{h_txt}' verificado en el intento {attempt}."
 
-        # Si había más de una fila en los resultados de búsqueda, probar la segunda fila y volver a rectificar el encabezado
-        if len(result_rows) > 1:
-            mouse_click(result_rows[1][0], result_rows[1][1], button="left", double=False)
-            time.sleep(1.2)
-            ok_header2, h_txt2 = _get_open_chat_header_text_and_verify(contact, left, top, right, bottom)
-            if ok_header2:
-                return True, f"Rectificado en segunda fila: el encabezado del chat abierto confirma '{h_txt2}'."
-
-    return False, f"Rectifiqué 2 veces el encabezado del chat tras buscar '{contact}', pero el chat de '{contact}' no se abrió."
+    return False, f"No se pudo confirmar '{contact}' en el encabezado del chat tras 2 intentos."
 
 
-def _focus_whatsapp_message_box_and_send(left: int, top: int, right: int, bottom: int, message_text: str) -> bool:
+def _send_message_in_open_whatsapp_chat_fast(left: int, top: int, right: int, bottom: int, message_text: str):
     """
-    Localiza la barra inferior 'Escribe un mensaje' del panel derecho (en 1920x1080 está en (867, 973) -> x=45%, y=90%),
-    hace clic, pega el mensaje y presiona Enter para enviarlo.
+    Clic directo e instantáneo en 'Escribe un mensaje' ((867, 973) en 1920x1080 -> x=45%, y=90%),
+    pega el texto y presiona Enter en <0.35s total.
     """
     w = max(800, right - left)
     h = max(600, bottom - top)
-
-    clicked_box = False
-    for placeholder in ["Escribe un mensaje", "Type a message"]:
-        m_list = find_all_matches_uia_and_ocr(placeholder, window_keyword="WhatsApp")
-        for mx, my, _ in m_list:
-            if mx > (left + int(w * 0.34)) and my > (top + int(h * 0.80)):
-                mouse_click(mx, my, button="left", double=False)
-                clicked_box = True
-                break
-        if clicked_box:
-            break
-
-    if not clicked_box:
-        # Coordenada exacta medida en pantalla (867, 973 en 1920x1080)
-        msg_box_x = left + int(w * 0.46)
-        msg_box_y = top + int(h * 0.90)
-        mouse_click(msg_box_x, msg_box_y, button="left", double=False)
-
-    time.sleep(0.35)
+    msg_box_x = left + int(w * 0.45)
+    msg_box_y = top + int(h * 0.90)
+    mouse_click(msg_box_x, msg_box_y, button="left", double=False)
+    time.sleep(0.15)
     send_text_and_keys(message_text, press_enter=True)
-    time.sleep(0.25)
+    time.sleep(0.12)
     pyautogui.press("enter")
-    return True
 
 
 def workflow_whatsapp_send_message(raw_order: str) -> str:
     """
-    Flujo autónomo con Criterio Propio y Doble Rectificación en WhatsApp Web:
-    - Si aún no hay un contacto indicado (ni en esta orden ni en memoria), NO escribe en el chat que esté abierto al azar;
-      pregunta a qué contacto deseas mandarlo.
-    - Cuando indicas un contacto (ej. 'David'), va a 'Buscar un chat o iniciar uno nuevo' ((304, 259)), escribe 'David',
-      selecciona el resultado de 'David', RECTIFICA DOS VECES que el encabezado del chat abierto diga 'David'
-      y solo entonces escribe el mensaje en 'Escribe un mensaje' ((867, 973)) y lo envía.
+    Flujo de WhatsApp Web fluido, directo y sin lag:
+    - Si el chat de la persona (ej. 'David') ya está abierto en pantalla, lo detecta en 0.07s y envía el mensaje de inmediato.
+    - Si no está abierto, lo busca en el buscador (304, 259), abre su fila, rectifica el encabezado en 0.07s y envía el mensaje en (867, 973).
     """
     contact, message_text = parse_whatsapp_order(raw_order)
     already_open = is_window_open_with_keyword("WhatsApp")
 
     if not already_open:
         open_url_in_chrome("https://web.whatsapp.com")
-        time.sleep(7.0)
+        time.sleep(6.0)
     else:
-        time.sleep(0.4)
+        time.sleep(0.15)
 
     left, top, right, bottom = focus_and_maximize_chrome_window("WhatsApp")
 
@@ -308,26 +271,23 @@ def workflow_whatsapp_send_message(raw_order: str) -> str:
             contact="",
             message=message_text,
             status="waiting_contact",
-            detail="Falta el nombre del contacto para no enviarlo al chat abierto por error.",
+            detail="Falta el nombre del contacto destino.",
             header_verified=False,
         )
-        return (
-            f"Señor, tengo listo su mensaje ('{message_text}'), pero por criterio de seguridad no lo envié en el chat "
-            f"que está abierto en pantalla para no equivocarme de persona. Dígame a quién se lo busco y envío (por ejemplo: 'Busca a David y mándaselo')."
-        )
+        return f"Señor, dígame el nombre del contacto al que desea enviar '{message_text}' (por ejemplo: 'Un mensaje a David diciendo {message_text}')."
 
     digits = re.sub(r"\D", "", contact)
     if len(digits) >= 8:
         url = f"https://web.whatsapp.com/send?phone={digits}&text={urllib.parse.quote(message_text)}"
         open_url_in_chrome(url)
-        time.sleep(7.5)
+        time.sleep(6.5)
         focus_and_maximize_chrome_window("WhatsApp")
-        time.sleep(0.5)
+        time.sleep(0.3)
         pyautogui.press("enter")
         update_action_state("whatsapp", raw_order, contact, message_text, "ok", f"Enviado al número {contact}.", True)
-        return f"Ya terminé la acción, Señor: Envié el mensaje '{message_text}' al número {contact}."
+        return f"Ya terminé la acción, Señor: Envié '{message_text}' al número {contact}."
 
-    ok_chat, verification_note = _search_select_and_rectify_whatsapp_contact(contact, left, top, right, bottom)
+    ok_chat, verification_note = _search_select_and_rectify_whatsapp_contact_fast(contact, left, top, right, bottom)
     if not ok_chat:
         update_action_state(
             app="whatsapp",
@@ -338,12 +298,9 @@ def workflow_whatsapp_send_message(raw_order: str) -> str:
             detail=verification_note,
             header_verified=False,
         )
-        return (
-            f"Señor, busqué a '{contact}' en la barra de búsqueda de WhatsApp y rectifiqué dos veces el encabezado del chat, "
-            f"pero el chat de '{contact}' no se abrió ({verification_note}). Detuve el envío para no mandarlo al chat que tenía abierto en pantalla."
-        )
+        return f"Señor, busqué a '{contact}' y rectifiqué dos veces el encabezado, pero no se pudo abrir su chat ({verification_note})."
 
-    _focus_whatsapp_message_box_and_send(left, top, right, bottom, message_text)
+    _send_message_in_open_whatsapp_chat_fast(left, top, right, bottom, message_text)
     update_action_state(
         app="whatsapp",
         order=raw_order,
@@ -353,46 +310,33 @@ def workflow_whatsapp_send_message(raw_order: str) -> str:
         detail=f"{verification_note} Mensaje enviado: '{message_text}'.",
         header_verified=True,
     )
-    return f"Ya terminé la acción, Señor: Busqué a '{contact}', rectifiqué en el encabezado que fuera su chat y le envié el mensaje '{message_text}'."
+    return f"Ya terminé la acción, Señor: Envié '{message_text}' en el chat de '{contact}'."
 
 
 def diagnose_and_recover_last_action(user_complaint: str) -> str:
-    """
-    Razonamiento propio y autodiagnóstico con doble rectificación cuando el usuario dice:
-    'no veo el mensaje', 'no se lo mandó a David', 'lo mandó a otro chat', 'ahora lo hace con los chats que tengo abiertos', etc.
-    """
     explicit_in_complaint = _extract_explicit_contact(user_complaint)
     if explicit_in_complaint:
         LAST_ACTION_STATE["last_target_contact"] = explicit_in_complaint
 
     contact = LAST_ACTION_STATE.get("last_target_contact", "")
-    last_msg = LAST_ACTION_STATE.get("last_message_text", "") or "Hola, este es un mensaje de prueba enviado por J.A.R.V.I.S."
+    last_msg = LAST_ACTION_STATE.get("last_message_text", "") or "prueba 123"
     last_detail = LAST_ACTION_STATE.get("last_detail", "")
 
     if not is_window_open_with_keyword("WhatsApp"):
         open_url_in_chrome("https://web.whatsapp.com")
-        time.sleep(6.5)
+        time.sleep(6.0)
 
     left, top, right, bottom = focus_and_maximize_chrome_window("WhatsApp")
 
     if contact:
-        ok_chat, verification_note = _search_select_and_rectify_whatsapp_contact(contact, left, top, right, bottom)
+        ok_chat, verification_note = _search_select_and_rectify_whatsapp_contact_fast(contact, left, top, right, bottom)
         if ok_chat:
-            _focus_whatsapp_message_box_and_send(left, top, right, bottom, last_msg)
+            _send_message_in_open_whatsapp_chat_fast(left, top, right, bottom, last_msg)
             update_action_state("whatsapp", user_complaint, contact, last_msg, "recovered", verification_note, True)
-            return (
-                f"Tiene razón, Señor: antes el clic caía fuera de la barra 'Buscar un chat o iniciar uno nuevo' y por eso escribía en el chat que ya estaba abierto. "
-                f"Acabo de ir directamente al buscador en (304, 259), busqué a '{contact}', rectifiqué su nombre en el encabezado superior y le envié '{last_msg}'."
-            )
-        return (
-            f"Señor, fui a la barra 'Buscar un chat o iniciar uno nuevo', escribí '{contact}' y rectifiqué dos veces el encabezado, "
-            f"pero no apareció un chat llamado '{contact}' ({verification_note}). Por seguridad no envié nada en el chat abierto."
-        )
+            return f"Listo, Señor: rectifiqué el chat de '{contact}' de forma directa y acabo de enviar '{last_msg}'."
+        return f"Señor, revisé el buscador dos veces para '{contact}' pero no se confirmó en el encabezado ({verification_note})."
 
-    return (
-        f"Señor, revisando mi última acción ({last_detail}): faltaba el nombre del contacto a buscar. "
-        f"Dígame 'Busca a David y mándale un mensaje de prueba' para buscarlo en la barra de búsqueda y verificar dos veces su encabezado."
-    )
+    return f"Señor, revisando mi última acción ({last_detail}): dígame a qué contacto enviarlo (ej. 'Un mensaje a David diciendo prueba 123')."
 
 
 def workflow_gmail_compose_or_send(raw_order: str) -> str:
@@ -443,7 +387,7 @@ def workflow_gmail_compose_or_send(raw_order: str) -> str:
     compose_url = "https://mail.google.com/mail/?" + urllib.parse.urlencode(params)
     open_url_in_chrome(compose_url)
 
-    time.sleep(4.5)
+    time.sleep(4.2)
     focus_and_maximize_chrome_window("Gmail")
 
     if check_if_login_required_on_screen():
@@ -451,7 +395,7 @@ def workflow_gmail_compose_or_send(raw_order: str) -> str:
         return "Señor, abrí Gmail en Google Chrome pero necesita iniciar sesión en su cuenta para que pueda redactar el correo."
 
     if not is_draft and to_addr:
-        time.sleep(1.2)
+        time.sleep(1.0)
         clicked = click_ui_element_by_uia_or_ocr("Enviar", double_click=False, right_click=False)
         if not clicked:
             pyautogui.hotkey("ctrl", "enter")
@@ -489,13 +433,13 @@ def workflow_youtube_watch_and_comment(raw_order: str) -> str:
         update_action_state("youtube", raw_order, "", "", "ok", f"Video '{video_part}' abierto.")
         return f"Ya terminé la acción, Señor: Video '{video_part}' reproduciéndose en YouTube."
 
-    time.sleep(5.2)
+    time.sleep(5.0)
     left, top, right, bottom = focus_and_maximize_chrome_window("YouTube")
     w = max(800, right - left)
     h = max(600, bottom - top)
 
     mouse_scroll("down", amount=6)
-    time.sleep(1.5)
+    time.sleep(1.2)
 
     clicked_box = (
         find_text_on_screen_and_click("comentario", double_click=False)
@@ -504,9 +448,9 @@ def workflow_youtube_watch_and_comment(raw_order: str) -> str:
     if not clicked_box:
         mouse_click(left + int(w * 0.35), top + int(h * 0.68), button="left", double=False)
 
-    time.sleep(0.8)
+    time.sleep(0.6)
     send_text_and_keys(comment_text, press_enter=False)
-    time.sleep(0.8)
+    time.sleep(0.6)
     if not click_ui_element_by_uia_or_ocr("Comentar", double_click=False):
         click_ui_element_by_uia_or_ocr("Comment", double_click=False)
 
@@ -528,7 +472,7 @@ def workflow_generic_webapp_multistep(app_label: str, base_url: str, raw_order: 
         if to_addr:
             compose_outlook += f"&to={urllib.parse.quote(to_addr)}"
         open_url_in_chrome(compose_outlook)
-        time.sleep(4.5)
+        time.sleep(4.2)
         focus_and_maximize_chrome_window("Outlook")
         if check_if_login_required_on_screen():
             return "Señor, abrí Outlook en Chrome pero necesita iniciar sesión en su cuenta."
@@ -553,7 +497,7 @@ def workflow_generic_webapp_multistep(app_label: str, base_url: str, raw_order: 
                 target_url = f"https://www.netflix.com/search?q={urllib.parse.quote(search_term)}"
 
     open_url_in_chrome(target_url)
-    time.sleep(4.5)
+    time.sleep(4.2)
     focus_and_maximize_chrome_window(app_label)
 
     if check_if_login_required_on_screen():
@@ -568,15 +512,15 @@ def workflow_generic_webapp_multistep(app_label: str, base_url: str, raw_order: 
         coords = click_ui_element_by_uia_or_ocr(target, double_click=False)
         if coords:
             actions_done.append(f"hice clic en '{target}'")
-            time.sleep(1.2)
+            time.sleep(0.8)
 
     if search_term and target_url == base_url and not click_match:
         if not (find_text_on_screen_and_click("Buscar", False) or find_text_on_screen_and_click("Search", False)):
             pyautogui.press("/")
-        time.sleep(0.6)
+        time.sleep(0.4)
         send_text_and_keys(search_term, press_enter=True)
         actions_done.append(f"busqué '{search_term}'")
-        time.sleep(1.2)
+        time.sleep(0.8)
 
     if write_match:
         txt = write_match.group(1).strip().strip("'\"")

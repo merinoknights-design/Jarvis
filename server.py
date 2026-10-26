@@ -327,18 +327,22 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             return {"reply": "Enseguida, Señor. Abriendo Gmail y redactando el correo; le aviso apenas quede listo.", "tool_used": "puppeteer"}
         return {"reply": open_web_app_in_chrome_with_login_check("Gmail", "https://mail.google.com"), "tool_used": "puppeteer"}
 
-    # Flujo de WhatsApp: se activa si menciona "whatsapp", O si pide "busca a [Nombre] y manda...", "manda un mensaje de prueba",
-    # "manda un mensaje...", "mándale..." sin mencionar correo/gmail, O si la aplicación activa en memoria es WhatsApp:
+    # Flujo de WhatsApp: se activa si menciona "whatsapp", O si pide "un mensaje a [Nombre] diciendo...", "busca a [Nombre] y manda...",
+    # "manda un mensaje de prueba", "mándale..." sin mencionar correo/gmail, O si la aplicación activa en memoria es WhatsApp:
     is_whatsapp_order = (
         ("whatsapp" in low and any(v in low for v in ["manda", "mandar", "envía", "envia", "enviar", "mensaje", "escribe", "escríbele", "escribele", "dile", "diciendo", "perfil", "contacto", "chat", "prueba", "busca"]))
         or ("mensaje de prueba" in low and "correo" not in low and "gmail" not in low)
         or (
-            any(low.startswith(prefix) for prefix in ["busca a ", "entra al chat de ", "entra al perfil de ", "manda un mensaje", "mandar un mensaje", "envía un mensaje", "envia un mensaje", "mándale ", "mandale ", "escríbele ", "escribele ", "dile que "])
+            re.search(r"\b(?:un\s+mensaje\s+a|mensaje\s+a|manda\s+a|m[aá]ndale\s+a|env[ií]ale\s+a|escr[ií]bele\s+a)\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ]+", low) is not None
+            and "correo" not in low and "gmail" not in low and "@" not in low
+        )
+        or (
+            any(low.startswith(prefix) for prefix in ["un mensaje a ", "mensaje a ", "busca a ", "entra al chat de ", "entra al perfil de ", "manda un mensaje", "mandar un mensaje", "envía un mensaje", "envia un mensaje", "mándale ", "mandale ", "escríbele ", "escribele ", "dile que "])
             and "correo" not in low and "gmail" not in low and "@" not in low
         )
         or (
             LAST_ACTION_STATE.get("active_app") == "whatsapp"
-            and any(low.startswith(prefix) for prefix in ["manda ", "mandar ", "envía ", "envia ", "escribe ", "pon ", "dile ", "busca a "])
+            and any(low.startswith(prefix) for prefix in ["manda ", "mandar ", "envía ", "envia ", "escribe ", "pon ", "dile ", "busca a ", "un mensaje ", "mensaje "])
         )
     )
     if is_whatsapp_order:
