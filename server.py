@@ -287,26 +287,28 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             return {"reply": "Modelando la pieza en Modo Ordenado en Solid Edge 2026, Señor.", "tool_used": "filesystem"}
 
     # 5.9 CONCIENCIA DE ESTADO, RAZONAMIENTO DE ERRORES Y AUTODIAGNÓSTICO PROPIO
-    # Si el usuario pregunta por qué falló algo, "no veo el mensaje", "no lo mandó", "qué pasó con el error",
+    # Si el usuario pregunta por qué falló algo, "no veo el mensaje", "no lo mandó", "lo mandó a otro chat", "no se lo mandó a David",
     # Jarvis analiza lo que ocurrió realmente en su última acción y corrige el envío en lugar de buscar en internet.
     error_or_missing_phrases = [
         "no veo el mensaje", "no mando el mensaje", "no mandó el mensaje", "no lo mando", "no lo mandó",
         "no lo mandaste", "no se envio", "no se envió", "sigue sin mandar", "no escribio", "no escribió",
-        "no hiciste nada", "no hizo nada", "que paso con el error", "qué pasó con el error",
+        "no hiciste nada", "no hizo nada", "no lo hizo", "que paso con el error", "qué pasó con el error",
         "cual fue el error", "cuál fue el error", "por que no mando", "por qué no mandó",
         "por que no lo mando", "por qué no lo mandó", "por que fallo", "por qué falló",
         "no salio el mensaje", "no salió el mensaje", "no aparece el mensaje", "no envió nada", "no envio nada",
+        "lo mando a otro chat", "lo mandó a otro chat", "lo mando al primer chat", "lo mandó al primer chat",
+        "no se lo mando a", "no se lo mandó a", "ese no era el chat", "mandaselo a", "mándaselo a",
     ]
     if any(p in low for p in error_or_missing_phrases):
         execute_smart_task(
-            "Autodiagnóstico y Corrección",
+            "Autodiagnóstico y Rectificación",
             lambda: diagnose_and_recover_last_action(cleaned),
             tool_name="puppeteer",
             force_background=force_bg,
             notify_on_complete=True,
         )
         return {
-            "reply": "Revisando mi ejecución anterior en pantalla y corrigiendo el envío del mensaje ahora mismo, Señor...",
+            "reply": "Revisando el chat en pantalla y rectificando el contacto antes de reenviar el mensaje, Señor...",
             "tool_used": "memory",
         }
 
@@ -325,18 +327,18 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             return {"reply": "Enseguida, Señor. Abriendo Gmail y redactando el correo; le aviso apenas quede listo.", "tool_used": "puppeteer"}
         return {"reply": open_web_app_in_chrome_with_login_check("Gmail", "https://mail.google.com"), "tool_used": "puppeteer"}
 
-    # Flujo de WhatsApp: se activa si menciona "whatsapp", O si pide "manda un mensaje de prueba" / "manda un mensaje..." / "mándale..."
-    # sin mencionar correo/gmail, O si la aplicación activa en memoria es WhatsApp y sigue dictando qué mandar:
+    # Flujo de WhatsApp: se activa si menciona "whatsapp", O si pide "busca a [Nombre] y manda...", "manda un mensaje de prueba",
+    # "manda un mensaje...", "mándale..." sin mencionar correo/gmail, O si la aplicación activa en memoria es WhatsApp:
     is_whatsapp_order = (
-        ("whatsapp" in low and any(v in low for v in ["manda", "mandar", "envía", "envia", "enviar", "mensaje", "escribe", "escríbele", "escribele", "dile", "diciendo", "perfil", "contacto", "chat", "prueba"]))
+        ("whatsapp" in low and any(v in low for v in ["manda", "mandar", "envía", "envia", "enviar", "mensaje", "escribe", "escríbele", "escribele", "dile", "diciendo", "perfil", "contacto", "chat", "prueba", "busca"]))
         or ("mensaje de prueba" in low and "correo" not in low and "gmail" not in low)
         or (
-            any(low.startswith(prefix) for prefix in ["manda un mensaje", "mandar un mensaje", "envía un mensaje", "envia un mensaje", "mándale ", "mandale ", "escríbele ", "escribele ", "dile que "])
+            any(low.startswith(prefix) for prefix in ["busca a ", "entra al chat de ", "entra al perfil de ", "manda un mensaje", "mandar un mensaje", "envía un mensaje", "envia un mensaje", "mándale ", "mandale ", "escríbele ", "escribele ", "dile que "])
             and "correo" not in low and "gmail" not in low and "@" not in low
         )
         or (
             LAST_ACTION_STATE.get("active_app") == "whatsapp"
-            and any(low.startswith(prefix) for prefix in ["manda ", "mandar ", "envía ", "envia ", "escribe ", "pon ", "dile "])
+            and any(low.startswith(prefix) for prefix in ["manda ", "mandar ", "envía ", "envia ", "escribe ", "pon ", "dile ", "busca a "])
         )
     )
     if is_whatsapp_order:
@@ -347,7 +349,7 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             force_background=force_bg,
             notify_on_complete=True,
         )
-        return {"reply": "Enseguida, Señor. Enfocando WhatsApp y enviando el mensaje ahora mismo.", "tool_used": "puppeteer"}
+        return {"reply": "Enseguida, Señor. Buscando y rectificando el contacto en WhatsApp antes de enviar el mensaje.", "tool_used": "puppeteer"}
 
     if ("youtube" in low or "video" in low) and any(v in low for v in ["comenta", "comentario", "comentar"]):
         execute_smart_task(

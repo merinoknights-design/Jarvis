@@ -194,6 +194,72 @@ def click_ui_element_by_uia_or_ocr(target_text: str, double_click: bool = False,
     return find_text_on_screen_and_click(target_text, double_click=double_click, right_click=right_click)
 
 
+def find_all_matches_uia_and_ocr(target_text: str, window_keyword: str = "") -> List[Tuple[int, int, str]]:
+    """
+    Escanea la ventana activa usando tanto Windows UI Automation (pywinauto) como Visión OCR (RapidOCR)
+    y devuelve TODAS las coincidencias como lista de (cx, cy, texto_detectado).
+    Permite distinguir por coordenadas si un nombre (ej. 'David') está en:
+      - La barra de búsqueda (arriba a la izquierda)
+      - La lista de resultados de chats (abajo a la izquierda)
+      - El encabezado del chat abierto (arriba a la derecha, confirmando que estamos en el chat correcto)
+    """
+    matches: List[Tuple[int, int, str]] = []
+    target_low = target_text.lower().strip()
+    if not target_low:
+        return matches
+
+    kw = window_keyword.lower().strip()
+
+    # 1. Buscar en el árbol UIA de la ventana
+    try:
+        from pywinauto import Desktop
+        desk = Desktop(backend="uia")
+        for win in desk.windows():
+            if not win.is_visible():
+                continue
+            title = (win.window_text() or "").strip()
+            t_low = title.lower()
+            if "j.a.r.v.i.s" in t_low:
+                continue
+            if kw and kw not in t_low and "chrome" not in t_low:
+                continue
+            try:
+                for ctrl in win.descendants():
+                    c_name = (ctrl.window_text() or "").strip()
+                    if c_name and target_low in c_name.lower():
+                        rect = ctrl.rectangle()
+                        cx = int((rect.left + rect.right) / 2)
+                        cy = int((rect.top + rect.bottom) / 2)
+                        if cx > 0 and cy > 0:
+                            matches.append((cx, cy, c_name))
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # 2. Buscar con Visión OCR sobre la pantalla actual
+    try:
+        screenshot_path = Path("C:/Jarvis/logs/screen_scan_multi.png")
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        img = ImageGrab.grab()
+        img.save(str(screenshot_path))
+        ocr = get_ocr()
+        result, _ = ocr(str(screenshot_path))
+        if result:
+            for item in result:
+                box, detected_text, _ = item[0], item[1], item[2]
+                if target_low in detected_text.lower():
+                    xs = [pt[0] for pt in box]
+                    ys = [pt[1] for pt in box]
+                    cx = int(sum(xs) / 4.0)
+                    cy = int(sum(ys) / 4.0)
+                    matches.append((cx, cy, detected_text))
+    except Exception:
+        pass
+
+    return matches
+
+
 def find_text_on_screen_and_click(target_text: str, double_click: bool = False, right_click: bool = False) -> Optional[Tuple[int, int]]:
     try:
         screenshot_path = Path("C:/Jarvis/logs/screen_scan.png")
