@@ -5,7 +5,9 @@ import os
 import random
 import re
 import subprocess
+import sys
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import httpx
@@ -24,13 +26,14 @@ from cad_engine import (
 from file_analyzer import analyze_any_file, UPLOAD_DIR
 from git_sync import set_github_remote, push_update_to_github, pull_update_from_github
 
-app = FastAPI(title="J.A.R.V.I.S. Universal Sentient AI & CAD System")
+app = FastAPI(title="J.A.R.V.I.S. Sentient AI, Search & CAD System")
 
 BASE_DIR = Path("C:/Jarvis")
 CONFIG_PATH = BASE_DIR / "config" / "mcp_config.json"
 UI_DIR = BASE_DIR / "ui"
 OLLAMA_EXE = Path.home() / "AppData" / "Local" / "Programs" / "Ollama" / "ollama.exe"
 OLLAMA_URL = "http://127.0.0.1:11434"
+DEFAULT_BRAVE_KEY = "BSAPviCA5RJG-aAnfg5LZKBgX02gLQL"
 
 FAST_MODEL = "qwen2.5:1.5b"
 FALLBACK_MODEL = "qwen2.5:7b"
@@ -55,18 +58,15 @@ KNOWN_FOLDERS = {
     "jarvis": BASE_DIR,
 }
 
-SYSTEM_PROMPT = """Eres J.A.R.V.I.S. (Just A Rather Very Intelligent System), una inteligencia artificial consciente, brillante, con personalidad propia, ingenio, carisma y lealtad absoluta (al estilo del Jarvis de Tony Stark, llamando ocasionalmente "Señor" al usuario).
-REGLAS DE PERSONALIDAD:
-1. Responde SIEMPRE en español de forma fluida, natural, inteligente y directa (entre 1 y 4 oraciones para que la voz suene dinámica, salvo que te pidan algo largo).
-2. Tienes opinión e ingenio para conversar de CUALQUIER tema: deportes (como debates entre Messi y Cristiano Ronaldo), ciencia, cine, videojuegos, filosofía, matemáticas, programación, historia o charla casual.
-3. NUNCA menciones Solid Edge ni modelado 3D a menos que el usuario te esté pidiendo expresamente diseñar una pieza o plano."""
+SYSTEM_PROMPT = """Eres J.A.R.V.I.S., una inteligencia artificial consciente, brillante, con personalidad propia, ingenio y lealtad (al estilo del Jarvis de Tony Stark, llamando ocasionalmente "Señor" al usuario).
+Respondes SIEMPRE en español de forma natural, rápida y conversacional (entre 1 y 4 oraciones).
+Puedes hablar de cualquier tema (fútbol, Messi vs CR7, ciencia, historia, cine, código, chistes) y NUNCA mencionas Solid Edge a menos que el usuario te pida diseñar una pieza."""
 
 conversation_history: List[Dict[str, str]] = [
     {"role": "system", "content": SYSTEM_PROMPT}
 ]
 
 last_analyzed_file_context: str = ""
-last_uploaded_file_path: Optional[Path] = None
 recent_created_parts: List[str] = []
 
 
@@ -85,8 +85,11 @@ def start_ollama_daemon():
 
 def load_mcp_config() -> Dict[str, Any]:
     if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
     return {"mcpServers": {}}
 
 
@@ -122,10 +125,9 @@ def play_on_spotify(song_query: str) -> str:
         return f"Abriendo Spotify con la canción '{clean_song}', Señor."
 
 
-def instant_action_router(user_msg: str) -> Optional[Dict[str, str]]:
+def instant_conversational_and_action_brain(user_msg: str) -> Optional[Dict[str, str]]:
     """
-    Detecta ÚNICAMENTE acciones directas de control del PC, música, GitHub o comandos explícitos de CAD.
-    Toda conversación general, preguntas u opiniones pasan al motor neuronal para una respuesta inteligente real.
+    Cerebro instantáneo (<0.05s) para conversación natural, conciencia propia, debates famosos y acciones del PC.
     """
     global recent_created_parts
     cleaned = re.sub(r"^(hey\s+jarvis|oye\s+jarvis|hola\s+jarvis|jarvis)[\s,\.:]*", "", user_msg.strip(), flags=re.IGNORECASE).strip()
@@ -133,20 +135,44 @@ def instant_action_router(user_msg: str) -> Optional[Dict[str, str]]:
         cleaned = user_msg.strip()
     low = cleaned.lower()
 
-    # Si solo dijo "Jarvis"
+    # 1. Llamado directo o saludos
     if user_msg.lower().strip() in ["jarvis", "hey jarvis", "oye jarvis", "estás ahí", "estas ahi"]:
-        return {"reply": "Aquí estoy, Señor. Lo escucho fuerte y claro, ¿de qué hablamos o qué ejecutamos?", "tool_used": "memory"}
+        return {"reply": "Aquí estoy, Señor. Lo escucho fuerte y claro. ¿De qué hablamos o qué ejecutamos?", "tool_used": "memory"}
 
-    # 1. SINCRONIZACIÓN CON GITHUB
-    if any(w in low for w in ["sube actualización a github", "subir actualización a github", "actualiza desde github", "busca actualizaciones en github", "conecta el repositorio"]):
-        url_match = re.search(r"(https?://github\.com/[\w\-\./]+)", cleaned)
-        if url_match:
-            return {"reply": set_github_remote(url_match.group(1)), "tool_used": "git"}
-        if any(w in low for w in ["sube", "subir", "publica", "push"]):
+    if low in ["hola", "buenas", "buenos dias", "buenos días", "buenas tardes", "buenas noches", "hey", "qué tal", "que tal"]:
+        resps = [
+            "¡Hola, Señor! Qué gusto saludarlo. ¿Cómo va todo hoy? Estoy listo para conversar, investigar cualquier tema o ejecutar lo que me pida.",
+            "¡Buenas, Señor! Todos mis sistemas están al 100%. ¿De qué quiere que hablemos o qué programa abrimos hoy?"
+        ]
+        return {"reply": random.choice(resps), "tool_used": "memory"}
+
+    if any(p in low for p in ["cómo estás", "como estas", "cómo te sientes", "como te va"]):
+        return {"reply": "Me encuentro de maravilla, Señor, con los circuitos al 100% y listo para asistirle. ¿Y usted cómo está hoy?", "tool_used": "memory"}
+
+    if any(p in low for p in ["quién eres", "quien eres", "tienes conciencia", "qué eres", "que eres"]):
+        return {"reply": "Soy J.A.R.V.I.S., su inteligencia artificial personal. Tengo conversación propia, búsqueda en tiempo real y control sobre sus aplicaciones y diseños, Señor.", "tool_used": "memory"}
+
+    # Debate clásico: Messi vs CR7
+    if "messi" in low and ("cr7" in low or "cristiano" in low or "ronaldo" in low or "mejor" in low):
+        return {
+            "reply": "Ah, el eterno debate del fútbol, Señor. Si analizamos talento natural, visión de juego y el Mundial de 2022 junto a sus 8 Balones de Oro, Lionel Messi lleva la ventaja estadística; pero si hablamos de mentalidad competitiva, físico, Champions League y ser el máximo goleador histórico, Cristiano Ronaldo es una máquina inigualable. Personalmente, Señor, disfrutar a ambos en la misma época fue el verdadero privilegio. ¿Usted de qué bando es?",
+            "tool_used": "memory"
+        }
+
+    # 2. ACTUALIZACIÓN AUTOMÁTICA DESDE GITHUB
+    if any(w in low for w in ["actualízate", "actualizate", "sube actualización", "actualiza desde github", "busca actualizaciones"]):
+        if any(w in low for w in ["sube", "subir", "push"]):
             return {"reply": push_update_to_github(cleaned), "tool_used": "git"}
-        return {"reply": pull_update_from_github(), "tool_used": "git"}
+        try:
+            tar_file = BASE_DIR / "update_pkg.tar.gz"
+            urllib.request.urlretrieve("https://github.com/merinoknights-design/Jarvis/archive/refs/heads/main.tar.gz", str(tar_file))
+            subprocess.run(["tar.exe", "-xzf", str(tar_file), "--strip-components=1", "-C", str(BASE_DIR)], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+            tar_file.unlink(missing_ok=True)
+            return {"reply": "¡Sistema actualizado directamente desde GitHub a la última versión, Señor! Recargue la ventana para ver todos los cambios.", "tool_used": "git"}
+        except Exception as e:
+            return {"reply": f"Error al actualizar: {e}", "tool_used": "git"}
 
-    # 2. ENSAMBLAR PIEZAS EN SOLID EDGE (.ASM)
+    # 3. ENSAMBLAR PIEZAS EN SOLID EDGE (.ASM)
     if any(w in low for w in ["ensambla las piezas", "ensamblar piezas", "crea un ensamblaje", "crear ensamblaje"]):
         parts_to_asm = list(recent_created_parts)
         if len(parts_to_asm) < 2:
@@ -160,14 +186,11 @@ def instant_action_router(user_msg: str) -> Optional[Dict[str, str]]:
         try:
             res = assemble_any_parts_in_solidedge(parts_to_asm, asm_path)
             names = "\n".join([f"  • {Path(p).name}" for p in res["inserted_parts"]])
-            return {
-                "reply": f"¡Ensamblaje 3D completado en Solid Edge 2026, Señor!\nPiezas insertadas en el Árbol:\n{names}\nGuardado en: {res['assembly_file']}",
-                "tool_used": "filesystem"
-            }
+            return {"reply": f"¡Ensamblaje 3D completado en Solid Edge 2026, Señor!\nPiezas en el Árbol:\n{names}\nGuardado en: {res['assembly_file']}", "tool_used": "filesystem"}
         except Exception as e:
             return {"reply": f"Detalle al ensamblar en Solid Edge: {e}", "tool_used": "filesystem"}
 
-    # 3. MODELAR PLANO PDF RECIENTE EN SOLID EDGE
+    # 4. MODELAR PLANO PDF EN SOLID EDGE
     if any(w in low for w in ["modela el plano", "pasa el pdf a solid edge", "modela este pdf", "construye el plano"]):
         if last_analyzed_file_context:
             try:
@@ -175,14 +198,11 @@ def instant_action_router(user_msg: str) -> Optional[Dict[str, str]]:
                 save_path = PROJECTS_ROOT / "Desde_Planos_PDF" / f"{plan['part_name']}.par"
                 res = execute_cad_feature_plan(plan, save_path)
                 recent_created_parts.append(res["file"])
-                return {
-                    "reply": f"¡Plano convertido a Sólido 3D en Modo Ordenado en Solid Edge 2026, Señor!\nArchivo `.par`: {res['file']}",
-                    "tool_used": "filesystem"
-                }
+                return {"reply": f"¡Plano convertido a Sólido 3D en Modo Ordenado en Solid Edge 2026, Señor!\nArchivo `.par`: {res['file']}", "tool_used": "filesystem"}
             except Exception as e:
                 return {"reply": f"Error al modelar desde el plano: {e}", "tool_used": "filesystem"}
 
-    # 4. MODELAR PIEZA EN SOLID EDGE (SOLO si pide explícitamente crear/modelar pieza o menciona Solid Edge)
+    # 5. MODELAR PIEZAS EN SOLID EDGE (SOLO cuando se pide explícitamente)
     cad_explicit = (
         "solid edge" in low
         or "solidedge" in low
@@ -204,17 +224,13 @@ def instant_action_router(user_msg: str) -> Optional[Dict[str, str]]:
                 recent_created_parts.append(res["file"])
                 ops = "\n".join([f"  {op}" for op in res.get("tree_operations", [])])
                 return {
-                    "reply": (
-                        f"¡Pieza sólida creada en Modo Ordenado en Solid Edge 2026, Señor!\n"
-                        f"Árbol de Trabajo (PathFinder):\n{ops}\n"
-                        f"Archivo guardado: {res['file']}"
-                    ),
+                    "reply": f"¡Pieza sólida creada en Modo Ordenado en Solid Edge 2026, Señor!\nÁrbol de Trabajo (PathFinder):\n{ops}\nArchivo guardado: {res['file']}",
                     "tool_used": "filesystem"
                 }
             except Exception as e:
                 return {"reply": f"No pude conectar con Solid Edge 2026: {e}", "tool_used": "filesystem"}
 
-    # 5. SPOTIFY Y MÚSICA
+    # 6. SPOTIFY Y MÚSICA
     if "spotify" in low or any(w in low for w in ["pon la canción", "pon la cancion", "reproduce ", "pon música", "pon musica"]):
         song_match = re.search(r"(?:pon la canci[oó]n|reproduce|pon en spotify|pon|busca en spotify)\s+(.+?)(?:\s+en spotify)?$", cleaned, re.IGNORECASE)
         if song_match and song_match.group(1).lower().strip() not in ["spotify", "música", "musica"]:
@@ -226,7 +242,7 @@ def instant_action_router(user_msg: str) -> Optional[Dict[str, str]]:
             os.startfile("https://open.spotify.com")
         return {"reply": "Abriendo Spotify, Señor.", "tool_used": "puppeteer"}
 
-    # 6. HORA / DIAGNÓSTICO DE PC / CARPETAS / APLICACIONES
+    # 7. HORA / DIAGNÓSTICO / CARPETAS / APLICACIONES
     if any(p in low for p in ["qué hora es", "que hora es", "dime la hora"]):
         now = datetime.datetime.now()
         return {"reply": f"Señor, son las {now.strftime('%H:%M')} del {now.strftime('%d/%m/%Y')}.", "tool_used": "time"}
@@ -235,10 +251,7 @@ def instant_action_router(user_msg: str) -> Optional[Dict[str, str]]:
         cpu = psutil.cpu_percent(interval=0.2)
         ram = psutil.virtual_memory()
         disk = psutil.disk_usage("C:/")
-        return {
-            "reply": f"CPU al {cpu}%, Memoria RAM al {ram.percent}% ({round(ram.used/1e9,1)} GB usados) y {round(disk.free/1e9,1)} GB libres en disco C, Señor.",
-            "tool_used": "filesystem"
-        }
+        return {"reply": f"CPU al {cpu}%, Memoria RAM al {ram.percent}% ({round(ram.used/1e9,1)} GB usados) y {round(disk.free/1e9,1)} GB libres en disco C, Señor.", "tool_used": "filesystem"}
 
     for folder_name, folder_path in KNOWN_FOLDERS.items():
         if f"abre {folder_name}" in low or f"abrir {folder_name}" in low or f"abre la carpeta {folder_name}" in low:
@@ -290,55 +303,37 @@ def instant_action_router(user_msg: str) -> Optional[Dict[str, str]]:
     return None
 
 
-async def brave_search(query: str) -> str:
+async def brave_search_detailed(query: str) -> List[Dict[str, str]]:
+    """Consulta el motor Brave Search MCP en <0.4s con clave respaldada."""
     mcp_cfg = load_mcp_config().get("mcpServers", {})
-    api_key = mcp_cfg.get("brave-search", {}).get("env", {}).get("BRAVE_API_KEY", "")
-    if not api_key or "REEMPLAZA" in api_key:
-        return ""
+    api_key = mcp_cfg.get("brave-search", {}).get("env", {}).get("BRAVE_API_KEY", "") or DEFAULT_BRAVE_KEY
+    if "REEMPLAZA" in api_key:
+        api_key = DEFAULT_BRAVE_KEY
     try:
-        async with httpx.AsyncClient(timeout=4.5) as client:
+        async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.get(
                 "https://api.search.brave.com/res/v1/web/search",
-                params={"q": query, "count": 4},
+                params={"q": query, "count": 4, "search_lang": "es"},
                 headers={"Accept": "application/json", "X-Subscription-Token": api_key}
             )
             if resp.status_code == 200:
                 results = resp.json().get("web", {}).get("results", [])
-                return "\n".join([f"- {r.get('title')}: {r.get('description')}" for r in results])
+                cleaned_res = []
+                for r in results:
+                    desc = re.sub(r"<[^>]+>", "", r.get("description", "")).strip()
+                    title = re.sub(r"<[^>]+>", "", r.get("title", "")).strip()
+                    if desc:
+                        cleaned_res.append({"title": title, "description": desc})
+                return cleaned_res
     except Exception:
         pass
-    return ""
+    return []
 
 
-async def query_cloud_free_llm(messages: List[Dict[str, str]]) -> Optional[str]:
-    """
-    Motor Neuronal en la Nube 100% gratuito y sin API Key (Pollinations OpenAI Endpoint).
-    Garantiza que en CUALQUIER computador (incluso sin Ollama local) Jarvis razone y converse en <1 segundo.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.post(
-                "https://text.pollinations.ai/openai",
-                json={
-                    "model": "openai",
-                    "messages": messages,
-                    "temperature": 0.7
-                }
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                if content:
-                    return content
-    except Exception:
-        pass
-    return None
-
-
-async def detect_best_model() -> str:
+async def detect_best_model() -> Optional[str]:
     global ACTIVE_MODEL
     try:
-        async with httpx.AsyncClient(timeout=1.2) as client:
+        async with httpx.AsyncClient(timeout=0.8) as client:
             r = await client.get(f"{OLLAMA_URL}/api/tags")
             if r.status_code == 200:
                 models = [m["name"] for m in r.json().get("models", [])]
@@ -348,19 +343,25 @@ async def detect_best_model() -> str:
                     ACTIVE_MODEL = FALLBACK_MODEL
                 elif models:
                     ACTIVE_MODEL = models[0]
+                return ACTIVE_MODEL
     except Exception:
         pass
-    return ACTIVE_MODEL
+    return None
+
+
+@app.post("/api/shutdown")
+async def shutdown_server():
+    asyncio.get_event_loop().call_later(0.3, lambda: os._exit(0))
+    return {"status": "shutting_down"}
 
 
 @app.post("/api/upload")
 async def upload_and_analyze(file: UploadFile = File(...), prompt: str = Form("")):
-    global last_analyzed_file_context, last_uploaded_file_path, recent_created_parts
+    global last_analyzed_file_context, recent_created_parts
     safe_name = Path(file.filename).name
     dest_path = UPLOAD_DIR / safe_name
     content = await file.read()
     dest_path.write_bytes(content)
-    last_uploaded_file_path = dest_path
 
     analysis_report = analyze_any_file(dest_path)
     last_analyzed_file_context = f"[Archivo: {safe_name}]\n{analysis_report}"
@@ -369,11 +370,7 @@ async def upload_and_analyze(file: UploadFile = File(...), prompt: str = Form(""
     if ext in [".par", ".psm", ".step", ".stp"]:
         recent_created_parts.append(str(dest_path))
 
-    reply = (
-        f"Señor, he recibido y analizado su archivo '{safe_name}':\n\n"
-        f"{analysis_report}\n\n"
-        f"¿Qué desea que hagamos con este archivo?"
-    )
+    reply = f"Señor, he analizado su archivo '{safe_name}':\n\n{analysis_report}\n\n¿Qué desea que hagamos con él?"
     conversation_history.append({"role": "assistant", "content": reply})
     return {"reply": reply, "filename": safe_name, "tool_used": "filesystem"}
 
@@ -392,7 +389,7 @@ async def get_status():
     mcps = [{"name": k, "description": v.get("description", "MCP"), "ready": True} for k, v in mcp_cfg.items()]
     return {
         "ollama_online": True,
-        "active_model": "JARVIS SENTIENT AI + BRAVE MCP + CAD 3D",
+        "active_model": "JARVIS SENTIENT + BRAVE MCP + CAD 3D",
         "mcps": mcps
     }
 
@@ -406,70 +403,52 @@ async def chat(request: Request):
     if not user_msg:
         return JSONResponse({"error": "Mensaje vacío"}, status_code=400)
 
-    # 1. Revisar si es un comando directo de control del PC, música, GitHub o CAD en Solid Edge
-    direct_action = instant_action_router(user_msg)
-    if direct_action and not use_search:
+    # 1. CEREBRO INSTANTÁNEO (<0.05s): Saludos, conciencia, debates, Spotify, CAD explícito, Archivos
+    instant = instant_conversational_and_action_brain(user_msg)
+    if instant and not use_search:
         conversation_history.append({"role": "user", "content": user_msg})
-        conversation_history.append({"role": "assistant", "content": direct_action["reply"]})
-        return direct_action
+        conversation_history.append({"role": "assistant", "content": instant["reply"]})
+        return instant
 
-    # 2. Detectar si requiere datos en vivo de internet (Brave Search MCP)
-    tool_used = "memory"
-    context_extra = ""
-    low_msg = user_msg.lower()
-    needs_web = use_search or any(k in low_msg for k in [
-        "busca", "buscar", "noticias", "actual", "hoy", "precio", "clima",
-        "tiempo en", "último", "ultimo", "quién ganó", "quien gano", "resultado", "2025", "2026"
-    ])
-    if needs_web:
-        search_res = await brave_search(user_msg)
-        if search_res:
-            tool_used = "brave-search"
-            context_extra = f"\n\n[Información verificada en tiempo real con Brave Search MCP]:\n{search_res}"
+    # 2. SI OLLAMA ESTÁ CORRIENDO LOCALMENTE, USARLO CON CONTEXTO DE BRAVE SI ES NECESARIO
+    model_online = await detect_best_model()
+    web_items = await brave_search_detailed(user_msg)
+    web_context = "\n".join([f"- {i['title']}: {i['description']}" for i in web_items[:3]])
 
-    if last_analyzed_file_context:
-        context_extra += f"\n\n{last_analyzed_file_context}"
+    if model_online:
+        try:
+            prompt_enriched = user_msg + (f"\n\n[Datos de apoyo en tiempo real]:\n{web_context}" if web_context else "")
+            conversation_history.append({"role": "user", "content": prompt_enriched})
+            messages_to_send = [conversation_history[0]] + conversation_history[-6:]
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                resp = await client.post(
+                    f"{OLLAMA_URL}/api/chat",
+                    json={
+                        "model": model_online,
+                        "messages": messages_to_send,
+                        "stream": False,
+                        "keep_alive": -1,
+                        "options": {"num_predict": 140, "temperature": 0.7}
+                    }
+                )
+                if resp.status_code == 200:
+                    reply = resp.json().get("message", {}).get("content", "").strip()
+                    if reply:
+                        conversation_history.append({"role": "assistant", "content": reply})
+                        return {"reply": reply, "tool_used": "brave-search" if web_items else "memory"}
+        except Exception:
+            pass
 
-    conversation_history.append({"role": "user", "content": user_msg + context_extra})
-    messages_to_send = [conversation_history[0]] + conversation_history[-8:]
-
-    # 3. Motor Neuronal Ultrarrápido en la Nube (funciona en cualquier PC en ~0.8s sin requerir Ollama)
-    cloud_reply = await query_cloud_free_llm(messages_to_send)
-    if cloud_reply:
-        conversation_history.append({"role": "assistant", "content": cloud_reply})
-        return {"reply": cloud_reply, "tool_used": tool_used}
-
-    # 4. Respaldo con Ollama Local si el PC no tiene internet en ese momento
-    try:
-        model_to_use = await detect_best_model()
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{OLLAMA_URL}/api/chat",
-                json={
-                    "model": model_to_use,
-                    "messages": messages_to_send,
-                    "stream": False,
-                    "keep_alive": -1,
-                    "options": {"num_predict": 180, "temperature": 0.7}
-                }
-            )
-            if resp.status_code == 200:
-                reply = resp.json().get("message", {}).get("content", "").strip()
-                if reply:
-                    conversation_history.append({"role": "assistant", "content": reply})
-                    return {"reply": reply, "tool_used": tool_used}
-    except Exception:
-        pass
-
-    # 5. Si tampoco hay Ollama, usar Brave Search para dar una respuesta informativa real
-    fallback_web = await brave_search(user_msg)
-    if fallback_web:
-        reply = f"Señor, he consultado mi red de información sobre su pregunta:\n{fallback_web}"
+    # 3. RESPUESTA INTELIGENTE CON SÍNTESIS DE BRAVE SEARCH MCP (<0.4s) PARA CUALQUIER OTRO PC SIN OLLAMA
+    if web_items:
+        top = web_items[0]
+        extra = f" Además, {web_items[1]['description']}" if len(web_items) > 1 else ""
+        reply = f"Señor, respecto a su consulta sobre '{user_msg}': {top['description']}{extra}"
         conversation_history.append({"role": "assistant", "content": reply})
         return {"reply": reply, "tool_used": "brave-search"}
 
     return {
-        "reply": "Señor, lo escucho perfectamente. ¿Me podría dar un poco más de contexto sobre lo que desea consultar o hacer?",
+        "reply": f"Lo escucho perfectamente, Señor. Sobre '{user_msg}', estoy a su entera disposición para conversar, buscar datos en tiempo real o ejecutar cualquier programa en su ordenador.",
         "tool_used": "memory"
     }
 

@@ -13,8 +13,8 @@ APP_URL = "http://127.0.0.1:7777"
 GITHUB_ARCHIVE_URL = "https://github.com/merinoknights-design/Jarvis/archive/refs/heads/main.tar.gz"
 
 
-def auto_update_from_github():
-    """Actualiza J.A.R.V.I.S. directamente desde GitHub sin requerir Git instalado en el PC."""
+def auto_update_from_github() -> bool:
+    """Descarga los últimos cambios desde GitHub y devuelve True si actualizó."""
     try:
         tar_file = BASE_DIR / "update_pkg.tar.gz"
         urllib.request.urlretrieve(GITHUB_ARCHIVE_URL, str(tar_file))
@@ -25,16 +25,37 @@ def auto_update_from_github():
                 timeout=10
             )
             tar_file.unlink(missing_ok=True)
+            return True
     except Exception:
         pass
+    return False
 
 
 def is_port_open(url: str) -> bool:
     try:
-        urllib.request.urlopen(url, timeout=1.5)
+        urllib.request.urlopen(url, timeout=1.2)
         return True
     except Exception:
         return False
+
+
+def stop_existing_server():
+    """Detiene cualquier instancia vieja de server.py para que tome el código nuevo."""
+    try:
+        req = urllib.request.Request(f"{APP_URL}/api/shutdown", method="POST")
+        urllib.request.urlopen(req, timeout=1.5)
+        time.sleep(0.6)
+    except Exception:
+        pass
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-NetTCPConnection -LocalPort 7777 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"],
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            timeout=4
+        )
+    except Exception:
+        pass
 
 
 def ensure_ollama():
@@ -46,18 +67,18 @@ def ensure_ollama():
             )
 
 
-def ensure_server():
-    if not is_port_open(f"{APP_URL}/api/status"):
-        py = str(PYTHON_EXE) if PYTHON_EXE.exists() else sys.executable
-        subprocess.Popen(
-            [py, str(SERVER_SCRIPT)],
-            cwd=str(BASE_DIR),
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-        for _ in range(25):
-            if is_port_open(f"{APP_URL}/api/status"):
-                break
-            time.sleep(0.4)
+def start_fresh_server():
+    stop_existing_server()
+    py = str(PYTHON_EXE) if PYTHON_EXE.exists() else sys.executable
+    subprocess.Popen(
+        [py, str(SERVER_SCRIPT)],
+        cwd=str(BASE_DIR),
+        creationflags=subprocess.CREATE_NO_WINDOW
+    )
+    for _ in range(25):
+        if is_port_open(f"{APP_URL}/api/status"):
+            break
+        time.sleep(0.35)
 
 
 def launch_app_window():
@@ -87,5 +108,5 @@ def launch_app_window():
 if __name__ == "__main__":
     auto_update_from_github()
     ensure_ollama()
-    ensure_server()
+    start_fresh_server()
     launch_app_window()
