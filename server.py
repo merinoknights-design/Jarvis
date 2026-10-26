@@ -27,6 +27,8 @@ from file_analyzer import analyze_any_file, UPLOAD_DIR
 from git_sync import set_github_remote, push_update_to_github, pull_update_from_github
 from ui_controller import (
     play_song_on_spotify_autonomous,
+    play_video_on_youtube_autonomous,
+    click_ui_element_by_uia_or_ocr,
     find_text_on_screen_and_click,
     mouse_click,
     mouse_scroll,
@@ -259,14 +261,21 @@ def instant_conversational_and_action_brain(user_msg: str) -> Optional[Dict[str,
             mouse_click(cx, cy, button="right" if "derecho" in click_type else "left", double="doble" in click_type)
             return {"reply": f"He hecho {click_type} en las coordenadas ({cx}, {cy}), Señor.", "tool_used": "puppeteer"}
         else:
-            coords = find_text_on_screen_and_click(
+            coords = click_ui_element_by_uia_or_ocr(
                 target_str,
                 double_click=("doble" in click_type),
                 right_click=("derecho" in click_type)
             )
             if coords:
-                return {"reply": f"He localizado '{target_str}' en su pantalla en las coordenadas {coords} y he ejecutado el {click_type}, Señor.", "tool_used": "puppeteer"}
-            return {"reply": f"Escaneé su pantalla, Señor, pero no vi el texto '{target_str}' visible en este momento. Asegúrese de que la ventana esté en primer plano.", "tool_used": "puppeteer"}
+                return {"reply": f"He localizado el control '{target_str}' en las coordenadas {coords} y he ejecutado el {click_type}, Señor.", "tool_used": "puppeteer"}
+            return {"reply": f"Escaneé la aplicación y la pantalla, Señor, pero no encontré '{target_str}' visible en este momento.", "tool_used": "puppeteer"}
+
+    # 6.1b Reproducir directamente video o canción en YouTube
+    if "youtube" in low and any(w in low for w in ["pon ", "reproduce ", "busca ", "abre "]):
+        yt_match = re.search(r"(?:pon|reproduce|busca|abre)\s+(.+?)(?:\s+en youtube)?$", cleaned, re.IGNORECASE)
+        if yt_match and yt_match.group(1).lower().strip() != "youtube":
+            q_yt = yt_match.group(1).replace("en youtube", "").strip()
+            return {"reply": play_video_on_youtube_autonomous(q_yt), "tool_used": "puppeteer"}
 
     # 6.2 Hacer Scroll arriba / abajo en cualquier ventana
     if any(w in low for w in ["scroll abajo", "baja la página", "baja la pagina", "desplaza abajo", "haz scroll hacia abajo", "baja un poco"]):

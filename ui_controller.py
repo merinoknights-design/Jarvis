@@ -1,25 +1,25 @@
 import ctypes
+import json
 import os
 import re
 import subprocess
+import threading
 import time
 import urllib.parse
 from pathlib import Path
 from typing import Optional, Tuple, List
+import httpx
+import pyautogui
 from PIL import ImageGrab
 
+pyautogui.FAILSAFE = False
 user32 = ctypes.windll.user32
 
-# Constantes de eventos de Mouse y Teclado de la API Win32 (funcionan en todos los Windows sin instalar nada extra)
-MOUSEEVENTF_MOVE = 0x0001
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 MOUSEEVENTF_RIGHTDOWN = 0x0008
 MOUSEEVENTF_RIGHTUP = 0x0010
-MOUSEEVENTF_MIDDLEDOWN = 0x0020
-MOUSEEVENTF_MIDDLEUP = 0x0040
 MOUSEEVENTF_WHEEL = 0x0800
-MOUSEEVENTF_ABSOLUTE = 0x8000
 
 VK_MEDIA_NEXT_TRACK = 0xB0
 VK_MEDIA_PREV_TRACK = 0xB1
@@ -30,10 +30,9 @@ VK_VOLUME_DOWN = 0xAE
 VK_VOLUME_UP = 0xAF
 VK_RETURN = 0x0D
 VK_SPACE = 0x20
-VK_TAB = 0x09
 VK_ESCAPE = 0x1B
-VK_BACK = 0x08
 
+DEFAULT_BRAVE_KEY = "BSAPviCA5RJG-aAnfg5LZKBgX02gLQL"
 _ocr_engine = None
 
 
@@ -46,31 +45,17 @@ def get_ocr():
 
 
 def move_mouse(x: int, y: int):
-    user32.SetCursorPos(int(x), int(y))
+    pyautogui.moveTo(int(x), int(y), duration=0.15)
 
 
 def mouse_click(x: Optional[int] = None, y: Optional[int] = None, button: str = "left", double: bool = False):
     if x is not None and y is not None:
-        user32.SetCursorPos(int(x), int(y))
-        time.sleep(0.08)
-
-    if button == "right":
-        user32.mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
-        time.sleep(0.05)
-        user32.mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
+        pyautogui.click(x=int(x), y=int(y), clicks=2 if double else 1, interval=0.08, button=button)
     else:
-        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-        time.sleep(0.05)
-        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-        if double:
-            time.sleep(0.08)
-            user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-            time.sleep(0.05)
-            user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+        pyautogui.click(clicks=2 if double else 1, interval=0.08, button=button)
 
 
-def mouse_scroll(direction: str = "down", amount: int = 5):
-    """Hace scroll arriba o abajo en la ventana donde esté el cursor."""
+def mouse_scroll(direction: str = "down", amount: int = 6):
     delta = -120 * amount if direction == "down" else 120 * amount
     user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, int(delta), 0)
 
@@ -82,26 +67,54 @@ def press_vk(vk_code: int):
 
 
 def send_text_and_keys(text: str, press_enter: bool = False):
-    """Escribe cualquier texto o comentario en la ventana activa usando el portapapeles + Ctrl+V para soportar acentos y emojis."""
-    ps_cmd = (
-        f"Set-Clipboard -Value {json.dumps(text)}; "
-        "$wshell = New-Object -ComObject wscript.shell; "
-        "Start-Sleep -Milliseconds 150; "
-        "$wshell.SendKeys('^v'); "
-    )
+    """Escribe cualquier texto o comentario en la ventana activa usando portapapeles + Ctrl+V."""
+    import pyperclip
+    pyperclip.copy(text)
+    time.sleep(0.1)
+    pyautogui.hotkey("ctrl", "v")
     if press_enter:
-        ps_cmd += "Start-Sleep -Milliseconds 150; $wshell.SendKeys('{ENTER}');"
-    subprocess.run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd], timeout=6)
+        time.sleep(0.12)
+        pyautogui.press("enter")
 
 
-import json
+def click_ui_element_by_uia_or_ocr(target_text: str, double_click: bool = False, right_click: bool = False) -> Optional[Tuple[int, int]]:
+    """
+    1. Primero inspecciona los controles reales (botones, menús, pestañas, enlaces) de la ventana activa
+       mediante Windows UI Automation (pywinauto backend='uia') y hace clic exacto en el control.
+    2. Si no es un control estándar de Windows, escanea la pantalla con Visión OCR (RapidOCR) y hace clic.
+    """
+    target_low = target_text.lower().strip()
+
+    # Paso 1: Intentar encontrar el botón/elemento nativo con Windows UI Automation
+    try:
+        from pywinauto import Desktop
+        desk = Desktop(backend="uia")
+        for win in desk.windows():
+            if not win.is_visible():
+                continue
+            title = win.window_text()
+            if "J.A.R.V.I.S" in title:
+                continue
+            try:
+                for ctrl in win.descendants():
+                    c_name = (ctrl.window_text() or "").strip().lower()
+                    if c_name and target_low in c_name:
+                        rect = ctrl.rectangle()
+                        cx = int((rect.left + rect.right) / 2)
+                        cy = int((rect.top + rect.bottom) / 2)
+                        if cx > 0 and cy > 0:
+                            mouse_click(cx, cy, button="right" if right_click else "left", double=double_click)
+                            return (cx, cy)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Paso 2: Respaldo con Visión OCR sobre toda la pantalla
+    return find_text_on_screen_and_click(target_text, double_click=double_click, right_click=right_click)
 
 
 def find_text_on_screen_and_click(target_text: str, double_click: bool = False, right_click: bool = False) -> Optional[Tuple[int, int]]:
-    """
-    Captura la pantalla actual, localiza con visión OCR dónde aparece 'target_text'
-    y mueve el ratón hasta esas coordenadas exactas para hacer clic.
-    """
     screenshot_path = Path("C:/Jarvis/logs/screen_scan.png")
     screenshot_path.parent.mkdir(parents=True, exist_ok=True)
     img = ImageGrab.grab()
@@ -113,101 +126,146 @@ def find_text_on_screen_and_click(target_text: str, double_click: bool = False, 
         return None
 
     target_low = target_text.lower().strip()
-    best_coords = None
-
     for item in result:
-        box, detected_text, score = item[0], item[1], item[2]
+        box, detected_text, _ = item[0], item[1], item[2]
         if target_low in detected_text.lower():
-            # Calcular el centro del cuadro delimitador [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
             xs = [pt[0] for pt in box]
             ys = [pt[1] for pt in box]
             cx = int(sum(xs) / 4.0)
             cy = int(sum(ys) / 4.0)
-            best_coords = (cx, cy)
-            break
-
-    if best_coords:
-        btn = "right" if right_click else "left"
-        mouse_click(best_coords[0], best_coords[1], button=btn, double=double_click)
-        return best_coords
+            btn = "right" if right_click else "left"
+            mouse_click(cx, cy, button=btn, double=double_click)
+            return (cx, cy)
     return None
 
 
-def focus_window_by_title(title_part: str) -> bool:
-    ps = (
-        f"$p = Get-Process | Where-Object {{ $_.MainWindowTitle -like '*{title_part}*' -or $_.ProcessName -like '*{title_part}*' }} | Select-Object -First 1; "
-        "if ($p) { $wshell = New-Object -ComObject wscript.shell; $wshell.AppActivate($p.Id) }"
-    )
-    subprocess.run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps], timeout=4)
-    return True
+def resolve_spotify_track_uri(song_query: str) -> Optional[str]:
+    """Busca el ID oficial de la pista en Spotify (spotify:track:ID) en 0.3s para abrir la canción directa."""
+    try:
+        r = httpx.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params={"q": f"site:open.spotify.com/track {song_query}", "count": 5},
+            headers={"Accept": "application/json", "X-Subscription-Token": DEFAULT_BRAVE_KEY},
+            timeout=3.5
+        )
+        if r.status_code == 200:
+            for item in r.json().get("web", {}).get("results", []):
+                url = item.get("url", "")
+                m = re.search(r"open\.spotify\.com/(?:intl-[a-z]+/)?track/([A-Za-z0-9]+)", url)
+                if m:
+                    return f"spotify:track:{m.group(1)}"
+    except Exception:
+        pass
+    return None
+
+
+def resolve_youtube_video_url(query: str) -> Optional[str]:
+    """Busca el ID del primer video oficial en YouTube para reproducirlo directamente."""
+    try:
+        r = httpx.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params={"q": f"site:youtube.com/watch {query}", "count": 5},
+            headers={"Accept": "application/json", "X-Subscription-Token": DEFAULT_BRAVE_KEY},
+            timeout=3.5
+        )
+        if r.status_code == 200:
+            for item in r.json().get("web", {}).get("results", []):
+                url = item.get("url", "")
+                if "youtube.com/watch?v=" in url:
+                    return url
+    except Exception:
+        pass
+    return None
+
+
+def trigger_spotify_play_button_uia():
+    """
+    Usa Windows UI Automation (pywinauto backend='uia') para encontrar la ventana de Spotify,
+    ponerla al frente y pulsar directamente el botón verde principal de 'Reproducir' / 'Play' de la canción cargada.
+    """
+    try:
+        from pywinauto import Desktop
+        desk = Desktop(backend="uia")
+        spotify_win = None
+        for w in desk.windows():
+            title = (w.window_text() or "").lower()
+            cname = (w.element_info.class_name or "").lower()
+            if "spotify" in title or ("chrome_widgetwin" in cname and w.is_visible() and "j.a.r.v.i.s" not in title):
+                if "spotify" in title or any("spotify" in (c.window_text() or "").lower() for c in w.children()):
+                    spotify_win = w
+                    break
+
+        if spotify_win:
+            try:
+                spotify_win.set_focus()
+            except Exception:
+                pass
+            time.sleep(0.4)
+
+            # Buscar los botones de 'Reproducir' o 'Play' dentro de la página de la pista (y > 180 y y < 620)
+            win_rect = spotify_win.rectangle()
+            play_candidates = []
+            for ctrl in spotify_win.descendants(control_type="Button"):
+                name = (ctrl.window_text() or "").strip().lower()
+                if name in ["reproducir", "play"] or name.startswith("reproducir ") or name.startswith("play "):
+                    r = ctrl.rectangle()
+                    rel_y = r.top - win_rect.top
+                    rel_x = r.left - win_rect.left
+                    # El botón verde grande de Play de la pista o Top Result está en el área central (no en la barra inferior)
+                    if 160 < rel_y < (win_rect.height() - 110) and rel_x > 220:
+                        play_candidates.append(ctrl)
+
+            if play_candidates:
+                target_btn = play_candidates[0]
+                rect = target_btn.rectangle()
+                cx = int((rect.left + rect.right) / 2)
+                cy = int((rect.top + rect.bottom) / 2)
+                mouse_click(cx, cy, button="left", double=False)
+                return True
+
+            # Si cargó spotify:track:ID, presionar Enter en la ventana enfocada inicia la pista seleccionada
+            pyautogui.press("enter")
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def play_song_on_spotify_autonomous(song_query: str) -> str:
     """
-    Abre Spotify con la canción buscada, espera a que cargue la interfaz,
-    localiza en pantalla el resultado de la canción (o el área del Resultado Principal / Canciones)
-    y le da doble clic real para que empiece a sonar automáticamente.
+    1. Resuelve el Track ID exacto de la canción (spotify:track:ID) para ir directo a la canción y no solo al buscador.
+    2. Abre esa pista en Spotify Desktop.
+    3. Con Windows UI Automation localiza el botón verde real de 'Reproducir' / 'Play' dentro de Spotify y le hace clic.
     """
     clean_song = song_query.strip()
+    track_uri = resolve_spotify_track_uri(clean_song)
     encoded = urllib.parse.quote(clean_song)
+    uri_to_open = track_uri if track_uri else f"spotify:search:{encoded}"
 
     try:
-        os.startfile(f"spotify:search:{encoded}")
+        os.startfile(uri_to_open)
     except Exception:
         os.startfile(f"https://open.spotify.com/search/{encoded}")
         return f"Abriendo Spotify Web con '{clean_song}', Señor."
 
-    def _auto_click_spotify_result():
-        time.sleep(3.2)
-        focus_window_by_title("Spotify")
-        time.sleep(0.5)
+    def _worker():
+        time.sleep(2.8)
+        # Intentar pulsar el botón verde nativo de Play en Spotify vía UIAutomation
+        ok = trigger_spotify_play_button_uia()
+        if not ok:
+            time.sleep(1.0)
+            trigger_spotify_play_button_uia()
 
-        # 1. Intentar localizar el nombre de la canción en la lista de resultados de Spotify con visión OCR y darle doble clic
-        words = [w for w in clean_song.split() if len(w) >= 3]
-        search_target = words[0] if words else clean_song
+    threading.Thread(target=_worker, daemon=True).start()
+    return f"Enseguida, Señor. He cargado directamente la pista '{clean_song}' en Spotify y presionado el botón de reproducción."
 
-        screenshot_path = Path("C:/Jarvis/logs/spotify_scan.png")
-        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-        img = ImageGrab.grab()
-        screen_w, screen_h = img.size
-        img.save(str(screenshot_path))
 
-        clicked = False
-        try:
-            ocr = get_ocr()
-            result, _ = ocr(str(screenshot_path))
-            if result:
-                # Buscar coincidencias del nombre de la canción que estén debajo de la barra superior de búsqueda (y > 220px)
-                matches = []
-                for item in result:
-                    box, txt, _ = item[0], item[1], item[2]
-                    cx = int(sum(pt[0] for pt in box) / 4.0)
-                    cy = int(sum(pt[1] for pt in box) / 4.0)
-                    if cy > 210 and cx > 260 and search_target.lower() in txt.lower():
-                        matches.append((cx, cy))
-                if matches:
-                    # Hacer doble clic sobre el primer resultado de canción encontrado
-                    target_x, target_y = matches[0]
-                    mouse_click(target_x, target_y, button="left", double=True)
-                    clicked = True
-        except Exception:
-            pass
-
-        if not clicked:
-            # Respaldo por navegación de teclado de Spotify Desktop:
-            # En Spotify Desktop tras abrir spotify:search:X, Tab -> Enter reproduce el Top Result
-            ps_keys = (
-                "$wshell = New-Object -ComObject wscript.shell; "
-                "$wshell.AppActivate('Spotify'); "
-                "Start-Sleep -Milliseconds 300; "
-                "$wshell.SendKeys('{TAB}{TAB}{ENTER}');"
-            )
-            subprocess.run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_keys], timeout=5)
-            # Y clic en la tarjeta de Resultado Principal de Spotify (zona estándar central-izquierda)
-            top_result_x = int(screen_w * 0.36)
-            top_result_y = int(screen_h * 0.42)
-            mouse_click(top_result_x, top_result_y, button="left", double=True)
-
-    import threading
-    threading.Thread(target=_auto_click_spotify_result, daemon=True).start()
-    return f"Enseguida, Señor. He abierto Spotify, localizado '{clean_song}' en pantalla y activado su reproducción automática."
+def play_video_on_youtube_autonomous(query: str) -> str:
+    """Busca el primer video de YouTube y lo abre reproduciéndose directamente."""
+    direct_url = resolve_youtube_video_url(query)
+    if direct_url:
+        os.startfile(direct_url)
+        return f"Reproduciendo '{query}' directamente en YouTube, Señor."
+    q = urllib.parse.quote(query.strip())
+    os.startfile(f"https://www.youtube.com/results?search_query={q}")
+    return f"Abriendo resultados de '{query}' en YouTube, Señor."

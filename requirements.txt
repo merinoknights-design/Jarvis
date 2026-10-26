@@ -11,3 +11,5 @@ pillow
 rapidocr-onnxruntime
 faster-whisper
 av
+pyautogui
+pywinauto
