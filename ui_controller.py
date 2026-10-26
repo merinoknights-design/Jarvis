@@ -90,6 +90,25 @@ def send_text_and_keys(text: str, press_enter: bool = False):
         pass
 
 
+def is_window_open_with_keyword(keyword: str) -> bool:
+    """Verifica si ya existe una ventana visible cuyo título contenga keyword (ej. 'whatsapp', 'gmail', 'youtube')."""
+    kw = keyword.lower().strip()
+    try:
+        from pywinauto import Desktop
+        desk = Desktop(backend="uia")
+        for win in desk.windows():
+            if not win.is_visible():
+                continue
+            title = (win.window_text() or "").lower()
+            if "j.a.r.v.i.s" in title:
+                continue
+            if kw in title:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def focus_and_maximize_chrome_window(title_keyword: str = "") -> Optional[Tuple[int, int, int, int]]:
     """
     Trae al frente y maximiza la ventana de Google Chrome (o la que contenga title_keyword)
@@ -117,14 +136,17 @@ def focus_and_maximize_chrome_window(title_keyword: str = "") -> Optional[Tuple[
 
         if target_win:
             try:
-                target_win.set_focus()
-            except Exception:
-                pass
-            try:
                 user32.ShowWindow(target_win.handle, 3)  # SW_MAXIMIZE = 3
             except Exception:
                 pass
-            time.sleep(0.25)
+            try:
+                target_win.set_focus()
+            except Exception:
+                try:
+                    user32.SetForegroundWindow(target_win.handle)
+                except Exception:
+                    pass
+            time.sleep(0.3)
             r = target_win.rectangle()
             return (int(r.left), int(r.top), int(r.right), int(r.bottom))
     except Exception:
