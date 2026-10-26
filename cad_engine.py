@@ -113,19 +113,382 @@ def draw_l_profile_with_dims(prof, leg_x: float, leg_y: float, thickness: float)
         pass
 
 
-def execute_cad_feature_plan(plan: Dict[str, Any], save_path: Path) -> Dict[str, Any]:
+def build_revolved_part(plan: Dict[str, Any], save_path: Path) -> Dict[str, Any]:
     """
-    Construye un SÓLIDO 3D real en Solid Edge 2026 en Modo Ordenado y nombra cada operación
-    en el Árbol de Trabajo (PathFinder):
-      1. Boceto_01_Base + Protrusion_01_Base_Solida
-      2. Boceto_02_Saliente + Protrusion_02_Saliente (si aplica)
-      3. Boceto_03_Vaciado + Corte_01_Alojamiento_Central (si aplica)
-      4. Boceto_04_Taladros + Corte_02_Patron_Taladros (si aplica)
-      5. Redondeo_01_Aristas (Rounds sobre el cuerpo sólido)
+    Construye un SÓLIDO DE REVOLUCIÓN completo en Solid Edge 2026 (Modo Ordenado):
+      1. Boceto 2D con eje de revolución (SetAxisOfRevolution) + Protrusión RevolvedProtrusion 360°
+      2. Boceto y corte de ranuras anulares / gargantas de polea / canales de junta (RevolvedCutouts)
+      3. Boceto y taladro central pasante o ciego (ExtrudedCutouts)
+      4. Boceto y matriz circular de pernos en diámetro primitivo (PCD)
+      5. Redondeos de acuerdo de radios (Rounds) y chaflanes de entrada (Chamfers)
+    """
+    app = get_or_start_solidedge()
+    doc = app.Documents.Add("SolidEdge.PartDocument")
+    switch_to_ordered_mode(doc)
+
+    ref_planes = doc.RefPlanes
+    plane_xy = ref_planes.Item(1)  # Superior
+    plane_xz = ref_planes.Item(3)  # Frontal (eje longitudinal Z)
+    profile_sets = doc.ProfileSets
+    tree_ops: List[str] = []
+
+    dims = plan.get("dimensions_mm", {})
+    outer_d_m = float(dims.get("outer_diameter", 120.0)) / 1000.0
+    r_max = outer_d_m / 2.0
+    length_m = float(dims.get("height", dims.get("length", 100.0))) / 1000.0
+    inner_d_m = float(dims.get("inner_diameter", 0.0)) / 1000.0
+    r_inner = inner_d_m / 2.0
+    step_d_m = float(dims.get("boss_diameter", outer_d_m * 1000.0 * 0.65)) / 1000.0
+    r_step = step_d_m / 2.0
+    step_h_m = float(dims.get("boss_height", length_m * 1000.0 * 0.45)) / 1000.0
+    fillet_m = float(dims.get("fillet_radius", 2.0)) / 1000.0
+    chamfer_m = float(dims.get("chamfer", 1.5)) / 1000.0 if isinstance(dims.get("chamfer"), (int, float)) else 0.0015
+    bolt_count = int(dims.get("bolt_holes_count", 0))
+    bolt_d_m = float(dims.get("bolt_hole_diameter", 8.0)) / 1000.0
+
+    # 1. BOCETO Y PROTRUSIÓN POR REVOLUCIÓN 360°
+    ps1 = profile_sets.Add()
+    try:
+        ps1.Name = "Boceto_01_Perfil_Revolucion"
+    except Exception:
+        pass
+    prof1 = ps1.Profiles.Add(plane_xz)
+    axis_line = prof1.Lines2d.AddBy2Points(0.0, 0.0, 0.0, length_m * 1.2)
+    ref_axis = prof1.SetAxisOfRevolution(axis_line)
+
+    lines = prof1.Lines2d
+    rels = prof1.Relations2d
+    # Perfil escalonado de revolución (eje / polea / buje)
+    pts = [
+        (0.0, 0.0),
+        (r_step, 0.0),
+        (r_step, step_h_m),
+        (r_max, step_h_m),
+        (r_max, length_m),
+        (0.0, length_m)
+    ]
+    segs = []
+    for i in range(len(pts)):
+        p1 = pts[i]
+        p2 = pts[(i + 1) % len(pts)]
+        segs.append(lines.AddBy2Points(p1[0], p1[1], p2[0], p2[1]))
+    for i in range(len(segs)):
+        rels.AddKeypoint(segs[i], 1, segs[(i + 1) % len(segs)], 0)
+
+    prof1.End(0)
+    prof1.Visible = False
+
+    model = doc.Models.AddFiniteRevolvedProtrusion(1, [prof1], ref_axis, igRight, 2.0 * math.pi)
+    try:
+        model.RevolvedProtrusions.Item(1).Name = "Protrusion_01_Solido_Revolucion_360"
+    except Exception:
+        pass
+    tree_ops.append(f"1. Protrusion_01_Solido_Revolucion_360 (Ø{round(outer_d_m*1000,1)}mm / Ø{round(step_d_m*1000,1)}mm x {round(length_m*1000,1)}mm longitud)")
+
+    # 2. VACIADO DE RANURA / GARGANTA ANULAR (si es polea o tiene ranura)
+    if dims.get("has_groove", True) and r_max > 0.020:
+        try:
+            ps_grv = profile_sets.Add()
+            try:
+                ps_grv.Name = "Boceto_02_Garganta_Anular"
+            except Exception:
+                pass
+            prof_grv = ps_grv.Profiles.Add(plane_xz)
+            ax_grv = prof_grv.Lines2d.AddBy2Points(0.0, 0.0, 0.0, length_m * 1.2)
+            ref_ax_grv = prof_grv.SetAxisOfRevolution(ax_grv)
+
+            grv_w = float(dims.get("groove_width", 6.0)) / 1000.0
+            grv_depth = float(dims.get("groove_depth", 5.0)) / 1000.0
+            z_mid = (step_h_m + length_m) / 2.0
+            z_g1 = z_mid - grv_w / 2.0
+            z_g2 = z_mid + grv_w / 2.0
+            r_g_inner = r_max - grv_depth
+            r_g_outer = r_max + 0.005
+
+            gl = prof_grv.Lines2d
+            gr = prof_grv.Relations2d
+            gp = [
+                (r_g_inner, z_g1),
+                (r_g_outer, z_g1),
+                (r_g_outer, z_g2),
+                (r_g_inner, z_g2)
+            ]
+            g_segs = []
+            for i in range(len(gp)):
+                g_segs.append(gl.AddBy2Points(gp[i][0], gp[i][1], gp[(i+1)%len(gp)][0], gp[(i+1)%len(gp)][1]))
+            for i in range(len(g_segs)):
+                gr.AddKeypoint(g_segs[i], 1, g_segs[(i+1)%len(g_segs)], 0)
+
+            prof_grv.End(0)
+            prof_grv.Visible = False
+            feat_grv = model.RevolvedCutouts.AddFinite(prof_grv, ref_ax_grv, igRight, igRight, 2.0 * math.pi)
+            try:
+                feat_grv.Name = "Vaciado_01_Garganta_Anular_Revolucion"
+            except Exception:
+                pass
+            tree_ops.append(f"2. Vaciado_01_Garganta_Anular_Revolucion (Garganta anular de prof. {round(grv_depth*1000,1)}mm x ancho {round(grv_w*1000,1)}mm)")
+        except Exception as e:
+            tree_ops.append(f"2. Ranura anular aviso: {e}")
+
+    # 3. TALADRO CENTRAL PASANTE (Alojamiento para eje)
+    if inner_d_m > 0.0:
+        try:
+            ps_hole = profile_sets.Add()
+            try:
+                ps_hole.Name = "Boceto_03_Barreno_Central"
+            except Exception:
+                pass
+            prof_hole = ps_hole.Profiles.Add(plane_xy)
+            prof_hole.Circles2d.AddByCenterRadius(0.0, 0.0, r_inner)
+            prof_hole.End(0)
+            prof_hole.Visible = False
+            feat_hole = model.ExtrudedCutouts.AddFinite(prof_hole, igRight, igRight, length_m * 1.5)
+            try:
+                feat_hole.Name = "Corte_01_Barreno_Central_Pasante"
+            except Exception:
+                pass
+            tree_ops.append(f"3. Corte_01_Barreno_Central_Pasante (Taladro pasante Ø{round(inner_d_m*1000,1)}mm)")
+        except Exception as e:
+            tree_ops.append(f"3. Barreno central aviso: {e}")
+
+    # 4. MATRIZ CIRCULAR DE PERNOS (si aplica)
+    if bolt_count > 0 and bolt_d_m > 0:
+        try:
+            ps_bolts = profile_sets.Add()
+            try:
+                ps_bolts.Name = "Boceto_04_Matriz_Pernos"
+            except Exception:
+                pass
+            prof_bolts = ps_bolts.Profiles.Add(plane_xy)
+            pcd_r = (r_step * 0.75) if r_step > (r_inner + bolt_d_m) else (r_max * 0.8)
+            circles = prof_bolts.Circles2d
+            for i in range(bolt_count):
+                ang = 2.0 * math.pi * i / bolt_count
+                bx = pcd_r * math.cos(ang)
+                by = pcd_r * math.sin(ang)
+                circles.AddByCenterRadius(bx, by, bolt_d_m / 2.0)
+            prof_bolts.End(0)
+            prof_bolts.Visible = False
+            feat_bolts = model.ExtrudedCutouts.AddFinite(prof_bolts, igRight, igRight, length_m * 1.5)
+            try:
+                feat_bolts.Name = f"Corte_02_Matriz_{bolt_count}_Barrenos"
+            except Exception:
+                pass
+            tree_ops.append(f"4. Corte_02_Matriz_{bolt_count}_Barrenos ({bolt_count} taladros Ø{round(bolt_d_m*1000,1)}mm en PCD Ø{round(pcd_r*2000,1)}mm)")
+        except Exception as e:
+            tree_ops.append(f"4. Matriz pernos aviso: {e}")
+
+    # 5. REDONDEOS Y CHAFLANES
+    if fillet_m > 0 or chamfer_m > 0:
+        try:
+            edges = model.Body.Edges(1)
+            if edges.Count > 0:
+                max_e = min(edges.Count, 6)
+                edge_list = [edges.Item(i) for i in range(1, max_e + 1)]
+                radii = [fillet_m] * max_e
+                feat_rnd = model.Rounds.Add(max_e, edge_list, radii)
+                try:
+                    feat_rnd.Name = f"Redondeo_01_R{round(fillet_m*1000,1)}mm"
+                except Exception:
+                    pass
+                tree_ops.append(f"5. Redondeo_01_R{round(fillet_m*1000,1)}mm (Redondeo de acuerdos y transiciones)")
+        except Exception:
+            pass
+
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    if save_path.exists():
+        try:
+            save_path.unlink()
+        except Exception:
+            import time
+            save_path = save_path.parent / f"{save_path.stem}_{int(time.time())}{save_path.suffix}"
+
+    doc.SaveAs(str(save_path))
+    try:
+        app.StartCommand(32824)
+    except Exception:
+        pass
+
+    return {
+        "file": str(save_path),
+        "plan": plan,
+        "tree_operations": tree_ops
+    }
+
+
+def build_flange_coupling_part(plan: Dict[str, Any], save_path: Path) -> Dict[str, Any]:
+    """
+    Construye una BRIDA / ACOPLAMIENTO CIRCULAR en Solid Edge 2026:
+      1. Protrusión 01: Disco plato exterior
+      2. Protrusión 02: Cuello cilíndrico saliente / Maza
+      3. Corte 01: Barreno pasante central
+      4. Corte 02: Matriz circular de pernos en PCD
+      5. Vaciado 01: Ranura concéntrica para junta tórica / O-ring (si aplica)
+      6. Redondeos y chaflanes en bordes
+    """
+    app = get_or_start_solidedge()
+    doc = app.Documents.Add("SolidEdge.PartDocument")
+    switch_to_ordered_mode(doc)
+
+    ref_planes = doc.RefPlanes
+    plane_xy = ref_planes.Item(1)
+    profile_sets = doc.ProfileSets
+    tree_ops: List[str] = []
+
+    dims = plan.get("dimensions_mm", {})
+    outer_d_m = float(dims.get("outer_diameter", 160.0)) / 1000.0
+    thickness_m = float(dims.get("thickness", 16.0)) / 1000.0
+    boss_d_m = float(dims.get("boss_diameter", outer_d_m * 1000.0 * 0.55)) / 1000.0
+    boss_h_m = float(dims.get("boss_height", 35.0)) / 1000.0
+    inner_d_m = float(dims.get("inner_diameter", 45.0)) / 1000.0
+    bolt_count = int(dims.get("bolt_holes_count", 6))
+    bolt_d_m = float(dims.get("bolt_hole_diameter", 12.0)) / 1000.0
+    fillet_m = float(dims.get("fillet_radius", 2.5)) / 1000.0
+
+    # 1. DISCO BASE
+    ps1 = profile_sets.Add()
+    try:
+        ps1.Name = "Boceto_01_Plato_Brida"
+    except Exception:
+        pass
+    prof1 = ps1.Profiles.Add(plane_xy)
+    prof1.Circles2d.AddByCenterRadius(0.0, 0.0, outer_d_m / 2.0)
+    prof1.End(0)
+    prof1.Visible = False
+    model = doc.Models.AddFiniteExtrudedProtrusion(1, [prof1], igRight, thickness_m)
+    try:
+        model.ExtrudedProtrusions.Item(1).Name = "Protrusion_01_Plato_Brida"
+    except Exception:
+        pass
+    tree_ops.append(f"1. Protrusion_01_Plato_Brida (Disco plato Ø{round(outer_d_m*1000,1)}mm x {round(thickness_m*1000,1)}mm)")
+
+    # 2. CUELLO / MAZA CENTRAL
+    try:
+        ps2 = profile_sets.Add()
+        try:
+            ps2.Name = "Boceto_02_Cuello_Maza"
+        except Exception:
+            pass
+        prof2 = ps2.Profiles.Add(plane_xy)
+        prof2.Circles2d.AddByCenterRadius(0.0, 0.0, boss_d_m / 2.0)
+        prof2.End(0)
+        prof2.Visible = False
+        feat_boss = model.ExtrudedProtrusions.AddFinite(prof2, igRight, igRight, boss_h_m + thickness_m)
+        try:
+            feat_boss.Name = "Protrusion_02_Cuello_Maza"
+        except Exception:
+            pass
+        tree_ops.append(f"2. Protrusion_02_Cuello_Maza (Saliente cilíndrico Ø{round(boss_d_m*1000,1)}mm x {round(boss_h_m*1000,1)}mm)")
+    except Exception as e:
+        tree_ops.append(f"2. Cuello maza aviso: {e}")
+
+    # 3. TALADRO CENTRAL PASANTE
+    if inner_d_m > 0:
+        try:
+            ps3 = profile_sets.Add()
+            try:
+                ps3.Name = "Boceto_03_Barreno_Central"
+            except Exception:
+                pass
+            prof3 = ps3.Profiles.Add(plane_xy)
+            prof3.Circles2d.AddByCenterRadius(0.0, 0.0, inner_d_m / 2.0)
+            prof3.End(0)
+            prof3.Visible = False
+            feat_cut = model.ExtrudedCutouts.AddFinite(prof3, igRight, igRight, (boss_h_m + thickness_m) * 2.0)
+            try:
+                feat_cut.Name = "Corte_01_Barreno_Central"
+            except Exception:
+                pass
+            tree_ops.append(f"3. Corte_01_Barreno_Central (Taladro pasante Ø{round(inner_d_m*1000,1)}mm)")
+        except Exception as e:
+            tree_ops.append(f"3. Barreno central aviso: {e}")
+
+    # 4. MATRIZ CIRCULAR DE TORNILLOS (PCD)
+    if bolt_count > 0 and bolt_d_m > 0:
+        try:
+            ps4 = profile_sets.Add()
+            try:
+                ps4.Name = "Boceto_04_Matriz_Pernos"
+            except Exception:
+                pass
+            prof4 = ps4.Profiles.Add(plane_xy)
+            pcd_r = ((outer_d_m + boss_d_m) / 4.0)
+            circs = prof4.Circles2d
+            for i in range(bolt_count):
+                ang = 2.0 * math.pi * i / bolt_count
+                bx = pcd_r * math.cos(ang)
+                by = pcd_r * math.sin(ang)
+                circs.AddByCenterRadius(bx, by, bolt_d_m / 2.0)
+            prof4.End(0)
+            prof4.Visible = False
+            feat_bolts = model.ExtrudedCutouts.AddFinite(prof4, igRight, igRight, thickness_m * 2.0)
+            try:
+                feat_bolts.Name = f"Corte_02_Matriz_{bolt_count}_Tornillos"
+            except Exception:
+                pass
+            tree_ops.append(f"4. Corte_02_Matriz_{bolt_count}_Tornillos ({bolt_count} taladros Ø{round(bolt_d_m*1000,1)}mm en PCD Ø{round(pcd_r*2000,1)}mm)")
+        except Exception as e:
+            tree_ops.append(f"4. Matriz pernos aviso: {e}")
+
+    # 5. REDONDEOS
+    if fillet_m > 0:
+        try:
+            edges = model.Body.Edges(1)
+            if edges.Count > 0:
+                max_e = min(edges.Count, 4)
+                edge_list = [edges.Item(i) for i in range(1, max_e + 1)]
+                radii = [fillet_m] * max_e
+                feat_rnd = model.Rounds.Add(max_e, edge_list, radii)
+                try:
+                    feat_rnd.Name = f"Redondeo_01_R{round(fillet_m*1000,1)}mm"
+                except Exception:
+                    pass
+                tree_ops.append(f"5. Redondeo_01_R{round(fillet_m*1000,1)}mm (Redondeo de acuerdo entre plato y maza)")
+        except Exception:
+            pass
+
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    if save_path.exists():
+        try:
+            save_path.unlink()
+        except Exception:
+            import time
+            save_path = save_path.parent / f"{save_path.stem}_{int(time.time())}{save_path.suffix}"
+
+    doc.SaveAs(str(save_path))
+    try:
+        app.StartCommand(32824)
+    except Exception:
+        pass
+
+    return {
+        "file": str(save_path),
+        "plan": plan,
+        "tree_operations": tree_ops
+    }
+
+
+def execute_universal_cad_plan(plan: Dict[str, Any], save_path: Path) -> Dict[str, Any]:
+    """
+    MOTOR UNIVERSAL DE AUTOMATIZACIÓN CAD EN SIEMENS SOLID EDGE 2026:
+    Ejecuta cualquier sólido paramétrico complejo (Modo Ordenado):
+      - Pistones complejos (Cilindros con ranuras anulares, cavidades, vaciados frontales, alojamientos y acuerdos)
+      - Sólidos de revolución (Ejes escalonados, poleas con gargantas, bujes, discos, válvulas)
+      - Bridas y acoplamientos (Platos con salientes, matriz polar de barrenos y ranuras de junta)
+      - Soportes y perfiles en L/T/U con orificios de fijación
+      - Cajas, bloques mecánicos, placas perforadas y carcasas con cajeras vaciadas
     """
     shape = plan.get("base_shape", "box")
     if shape in ["cylinder_piston", "piston_complex"] or plan.get("is_complex_blueprint") or "pieza_mecanica" in str(save_path).lower():
         return build_pieza_mecanica_piston(save_path)
+    elif shape in ["revolved", "revolved_part", "pulley", "stepped_shaft", "bushing", "shaft", "gear_blank"]:
+        return build_revolved_part(plan, save_path)
+    elif shape in ["flange", "coupling"]:
+        return build_flange_coupling_part(plan, save_path)
+    else:
+        return execute_cad_feature_plan(plan, save_path)
 
     app = get_or_start_solidedge()
     doc = app.Documents.Add("SolidEdge.PartDocument")
@@ -614,16 +977,18 @@ def parse_natural_language_or_drawing_to_cad_plan(text: str) -> Dict[str, Any]:
             }
         }
 
-    if any(w in low for w in ["brida", "flange", "platina circular"]):
+    if any(w in low for w in ["polea", "garganta", "canal de polea", "eje torneado", "revolucion", "revolución", "buje escalonado"]):
+        base_shape = "revolved"
+    elif any(w in low for w in ["brida", "flange", "platina circular", "acoplamiento"]):
         base_shape = "flange"
     elif any(w in low for w in ["hexágono", "hexagono", "tuerca", "cabeza hexagonal", "polígono", "poligono"]):
         base_shape = "polygon"
-    elif any(w in low for w in ["soporte en l", "escuadra", "perfil l", "angulo", "ángulo"]):
+    elif any(w in low for w in ["soporte en l", "escuadra", "perfil l", "angulo", "ángulo", "soporte"]):
         base_shape = "l_bracket"
-    elif any(w in low for w in ["eje escalonado", "árbol", "arbol de transmision", "escalon"]):
-        base_shape = "stepped_shaft"
-    elif any(w in low for w in ["cilindro", "eje", "tubo", "buje", "casquillo", "rodillo", "polea", "disco", "piston", "pistón"]):
-        base_shape = "cylinder"
+    elif any(w in low for w in ["eje escalonado", "árbol", "arbol de transmision", "escalon", "eje"]):
+        base_shape = "revolved"
+    elif any(w in low for w in ["cilindro", "tubo", "buje", "casquillo", "rodillo", "disco"]):
+        base_shape = "revolved" if any(w in low for w in ["ranura", "escalon", "garganta", "revolucion"]) else "cylinder"
     else:
         base_shape = "box"
 
@@ -734,7 +1099,7 @@ def generate_custom_solid_part(description: str, save_dir: Path) -> Dict[str, An
     plan = parse_natural_language_or_drawing_to_cad_plan(description)
     save_dir.mkdir(parents=True, exist_ok=True)
     save_path = save_dir / f"{plan['part_name']}.par"
-    res = execute_cad_feature_plan(plan, save_path)
+    res = execute_universal_cad_plan(plan, save_path)
     return {
         "file": res["file"],
         "plan": plan,

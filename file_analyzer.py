@@ -43,31 +43,35 @@ def analyze_blueprint_with_gemini(file_path: Path) -> Tuple[str, Optional[Dict[s
         "Identifica todas las vistas (Frontal, Superior, Lateral, Isométrica), secciones o cortes (Corte A-A, Corte C-C, etc.), "
         "detalles escalonados (Detalle B) y todas las cotas numéricas (radios R, diámetros Ø, alturas, anchuras, ranuras, espesores, chaflanes y tolerancias). "
         "Genera un reporte técnico claro en español y devuelve un objeto JSON estructurado al final delimitado con ```json ... ``` "
-        "con los campos:\n"
+        "con la especificación completa para su modelado en Solid Edge 2026 en Modo Ordenado:\n"
         "{\n"
         '  "part_name": "Nombre_de_la_pieza",\n'
-        '  "base_shape": "cylinder_piston" o "cylinder" o "box" o "flange",\n'
+        '  "base_shape": "cylinder_piston" | "revolved" | "flange" | "l_bracket" | "box",\n'
         '  "is_complex_blueprint": true,\n'
         '  "dimensions_mm": {\n'
-        '    "outer_radius": 150,\n'
-        '    "inner_radius": 130,\n'
-        '    "total_height": 180,\n'
-        '    "inner_height": 140,\n'
-        '    "central_opening_width": 100,\n'
-        '    "support_width": 40,\n'
-        '    "pin_radius": 25,\n'
-        '    "outer_pin_radius": 45,\n'
-        '    "transition_radius": 100,\n'
-        '    "round_r5": 5,\n'
-        '    "round_r15": 15,\n'
-        '    "chamfer": "5x45",\n'
-        '    "ring_grooves_depth": 7.5,\n'
-        '    "ring_grooves_width": 5.0\n'
+        '    "outer_diameter": 160,\n'
+        '    "inner_diameter": 40,\n'
+        '    "height": 180,\n'
+        '    "length": 140,\n'
+        '    "width": 100,\n'
+        '    "thickness": 16,\n'
+        '    "boss_diameter": 90,\n'
+        '    "boss_height": 45,\n'
+        '    "groove_width": 6,\n'
+        '    "groove_depth": 7.5,\n'
+        '    "bolt_holes_count": 6,\n'
+        '    "bolt_hole_diameter": 12,\n'
+        '    "fillet_radius": 3,\n'
+        '    "chamfer": 2\n'
         "  },\n"
         '  "ordered_operations": [\n'
         '    "1. Boceto 2D y Protrusión del cuerpo principal",\n'
-        '    "2. Vaciado de ranuras superiores", ...\n'
+        '    "2. Vaciados y ranuras interiores/exteriores",\n'
+        '    "3. Matriz de taladros",\n'
+        '    "4. Redondeos y chaflanes"\n'
         "  ],\n"
+        '  "summary_es": "Descripción técnica de cotas y geometría"\n'
+        "}"
         '  "summary_es": "Descripción de cotas y geometría interpretada"\n'
         "}"
     )

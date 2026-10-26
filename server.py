@@ -21,6 +21,7 @@ from cad_engine import (
     generate_custom_solid_part,
     parse_natural_language_or_drawing_to_cad_plan,
     execute_cad_feature_plan,
+    execute_universal_cad_plan,
     assemble_any_parts_in_solidedge,
     build_pieza_mecanica_piston,
 )
@@ -210,10 +211,7 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             part_name = p.get("part_name", "Pieza_mecanica")
             save_path = PROJECTS_ROOT / f"{part_name}.par"
             try:
-                if p.get("base_shape") == "cylinder_piston" or p.get("is_complex_blueprint") or "pieza_mecanica" in part_name.lower():
-                    res = build_pieza_mecanica_piston(save_path)
-                else:
-                    res = execute_cad_feature_plan(p, save_path)
+                res = execute_universal_cad_plan(p, save_path)
                 recent_created_parts.append(res["file"])
                 ops_str = "\n".join([f"    • {op}" for op in res.get("tree_operations", [])])
                 created_reports.append(f"  • {Path(res['file']).name}:\n{ops_str}")
@@ -362,7 +360,7 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             try:
                 plan = parse_natural_language_or_drawing_to_cad_plan(last_analyzed_file_context + " " + cleaned)
                 save_path = PROJECTS_ROOT / "Desde_Planos_PDF" / f"{plan['part_name']}.par"
-                res = execute_cad_feature_plan(plan, save_path)
+                res = execute_universal_cad_plan(plan, save_path)
                 recent_created_parts.append(res["file"])
                 return {"reply": f"¡Plano convertido a Sólido 3D en Modo Ordenado en Solid Edge 2026, Señor!\nArchivo `.par`: {res['file']}", "tool_used": "filesystem"}
             except Exception as e:
@@ -927,10 +925,7 @@ async def model_pending_cad_plans():
         part_name = p.get("part_name", "Pieza_mecanica")
         save_path = PROJECTS_ROOT / f"{part_name}.par"
         try:
-            if p.get("base_shape") == "cylinder_piston" or p.get("is_complex_blueprint") or "pieza_mecanica" in part_name.lower():
-                res = build_pieza_mecanica_piston(save_path)
-            else:
-                res = execute_cad_feature_plan(p, save_path)
+            res = execute_universal_cad_plan(p, save_path)
             recent_created_parts.append(res["file"])
             ops_str = "\n".join([f"    • {op}" for op in res.get("tree_operations", [])])
             created_reports.append(f"  • {Path(res['file']).name}:\n{ops_str}")
