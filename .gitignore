@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+uploads/*
+!uploads/.gitkeep
+memory/*.db
+memory/*.json
+logs/*
+*.par
+*.asm
+*.psm
+*.dft

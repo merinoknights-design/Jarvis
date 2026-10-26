@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+httpx
+psutil
+python-multipart
+pywin32
+pypdf
+python-docx
+openpyxl
+pillow
+rapidocr-onnxruntime
+faster-whisper
+av

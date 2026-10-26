@@ -1,0 +1,53 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-filesystem", "C:\\Users\\User\\Documents", "C:\\Jarvis"],
+      "description": "Acceso a archivos locales del sistema"
+    },
+    "memory": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-memory"],
+      "env": {
+        "MEMORY_FILE_PATH": "C:\\Jarvis\\memory\\jarvis_memory.json"
+      },
+      "description": "Memoria persistente entre sesiones"
+    },
+    "fetch": {
+      "command": "C:\\Users\\User\\AppData\\Roaming\\Python\\Python314\\Scripts\\uvx.exe",
+      "args": ["mcp-server-fetch"],
+      "description": "Leer y descargar contenido de páginas web"
+    },
+    "time": {
+      "command": "C:\\Users\\User\\AppData\\Roaming\\Python\\Python314\\Scripts\\uvx.exe",
+      "args": ["mcp-server-time", "--local-timezone", "America/Bogota"],
+      "description": "Hora actual y conversiones de zona horaria"
+    },
+    "brave-search": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-brave-search"],
+      "env": {
+        "BRAVE_API_KEY": "BSAPviCA5RJG-aAnfg5LZKBgX02gLQL"
+      },
+      "description": "Búsqueda web con Brave (2000 búsquedas/mes gratis)"
+    },
+    "puppeteer": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-puppeteer"],
+      "description": "Automatización del navegador Chrome"
+    },
+    "git": {
+      "command": "C:\\Users\\User\\AppData\\Roaming\\Python\\Python314\\Scripts\\uvx.exe",
+      "args": ["mcp-server-git"],
+      "env": {
+        "GIT_PYTHON_GIT_EXECUTABLE": "C:\\Program Files\\Git\\cmd\\git.exe"
+      },
+      "description": "Lectura y análisis de repositorios Git locales"
+    },
+    "sqlite": {
+      "command": "C:\\Users\\User\\AppData\\Roaming\\Python\\Python314\\Scripts\\uvx.exe",
+      "args": ["mcp-server-sqlite", "--db-path", "C:\\Jarvis\\memory\\jarvis.db"],
+      "description": "Base de datos local SQLite para almacenar información"
+    }
+  }
+}

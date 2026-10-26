@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>J.A.R.V.I.S. — Ingeniería CAD & Multimodal</title>
+  <style>
+    :root {
+      --cyan: #00f0ff;
+      --cyan-dim: rgba(0, 240, 255, 0.25);
+      --cyan-glow: rgba(0, 240, 255, 0.65);
+      --panel-bg: rgba(6, 20, 38, 0.85);
+      --amber: #ffaa00;
+      --green: #00ff9d;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Consolas, monospace;
+    }
+
+    body {
+      background: radial-gradient(circle at center, #081b33 0%, #02060d 100%);
+      color: #dffaff;
+      height: 100vh;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 290px 1fr 410px;
+      grid-template-rows: 62px 1fr 86px;
+      gap: 14px;
+      padding: 14px;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image: 
+        linear-gradient(rgba(0, 240, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 240, 255, 0.04) 1px, transparent 1px);
+      background-size: 36px 36px;
+      pointer-events: none;
+    }
+
+    header {
+      grid-column: 1 / -1;
+      background: var(--panel-bg);
+      border: 1px solid var(--cyan-dim);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 22px;
+      z-index: 2;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      letter-spacing: 3px;
+      font-weight: 700;
+      font-size: 1.15rem;
+      color: var(--cyan);
+      text-shadow: 0 0 10px var(--cyan-glow);
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.8rem;
+      background: rgba(0, 240, 255, 0.08);
+      padding: 6px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--cyan-dim);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+    }
+
+    .panel {
+      background: var(--panel-bg);
+      border: 1px solid var(--cyan-dim);
+      border-radius: 10px;
+      padding: 15px;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .panel-title {
+      font-size: 0.78rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--cyan);
+      border-bottom: 1px solid var(--cyan-dim);
+      padding-bottom: 9px;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .mcp-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow-y: auto;
+    }
+
+    .mcp-item {
+      background: rgba(0, 240, 255, 0.05);
+      border: 1px solid rgba(0, 240, 255, 0.18);
+      border-radius: 6px;
+      padding: 8px 11px;
+      transition: all 0.25s;
+    }
+
+    .mcp-item.active-tool {
+      border-color: var(--amber);
+      box-shadow: 0 0 14px rgba(255, 170, 0, 0.5);
+      background: rgba(255, 170, 0, 0.14);
+    }
+
+    .mcp-name {
+      font-weight: 600;
+      font-size: 0.84rem;
+      color: #fff;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .mcp-desc {
+      font-size: 0.72rem;
+      color: #8cccdb;
+      margin-top: 3px;
+    }
+
+    .center-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
+    }
+
+    .reactor-container {
+      position: relative;
+      width: 265px;
+      height: 265px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .ring {
+      position: absolute;
+      border-radius: 50%;
+      border: 2px solid var(--cyan);
+      box-shadow: 0 0 18px var(--cyan-dim), inset 0 0 18px var(--cyan-dim);
+    }
+
+    .ring-1 {
+      width: 255px;
+      height: 255px;
+      border-style: dashed;
+      animation: spin 24s linear infinite;
+    }
+
+    .ring-2 {
+      width: 205px;
+      height: 205px;
+      border-width: 3px;
+      border-color: rgba(0, 240, 255, 0.55);
+      border-left-color: transparent;
+      border-right-color: transparent;
+      animation: spin-rev 12s linear infinite;
+    }
+
+    .ring-3 {
+      width: 155px;
+      height: 155px;
+      border-style: dotted;
+      animation: spin 16s linear infinite;
+    }
+
+    .core {
+      width: 108px;
+      height: 108px;
+      border-radius: 50%;
+      background: radial-gradient(circle, #ffffff 0%, #00f0ff 45%, #004466 100%);
+      box-shadow: 0 0 40px var(--cyan), 0 0 80px var(--cyan-glow);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: #011627;
+      font-size: 0.85rem;
+      transition: all 0.2s ease;
+    }
+
+    .reactor-container.listening .core {
+      background: radial-gradient(circle, #fff 0%, #00ff9d 50%, #005533 100%);
+      box-shadow: 0 0 50px var(--green), 0 0 95px var(--green);
+      transform: scale(1.07);
+    }
+
+    .reactor-container.speaking .core {
+      animation: pulse-speak 0.55s ease-in-out infinite alternate;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes spin-rev { to { transform: rotate(-360deg); } }
+    @keyframes pulse-speak {
+      from { transform: scale(0.95); box-shadow: 0 0 30px var(--cyan); }
+      to { transform: scale(1.15); box-shadow: 0 0 80px var(--cyan), 0 0 115px #fff; }
+    }
+
+    .state-label {
+      margin-top: 18px;
+      font-size: 0.86rem;
+      letter-spacing: 2px;
+      color: var(--cyan);
+      text-transform: uppercase;
+      text-align: center;
+    }
+
+    .quick-tips {
+      margin-top: 14px;
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: 540px;
+    }
+
+    .chip {
+      font-size: 0.74rem;
+      padding: 6px 11px;
+      border-radius: 999px;
+      background: rgba(0, 240, 255, 0.09);
+      border: 1px solid var(--cyan-dim);
+      color: #bceeff;
+      cursor: pointer;
+    }
+    .chip:hover {
+      background: var(--cyan);
+      color: #001220;
+    }
+
+    .drop-banner {
+      margin-top: 12px;
+      padding: 8px 16px;
+      border: 1px dashed var(--cyan);
+      border-radius: 8px;
+      font-size: 0.76rem;
+      color: #9beeff;
+      background: rgba(0, 240, 255, 0.04);
+      cursor: pointer;
+    }
+
+    .chat-box {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-right: 6px;
+    }
+
+    .msg {
+      padding: 10px 13px;
+      border-radius: 8px;
+      font-size: 0.86rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    .msg.user {
+      align-self: flex-end;
+      background: rgba(0, 240, 255, 0.18);
+      border: 1px solid var(--cyan);
+      color: #fff;
+    }
+
+    .msg.jarvis {
+      align-self: flex-start;
+      background: rgba(255, 255, 255, 0.06);
+      border-left: 3px solid var(--cyan);
+      color: #d8f8ff;
+    }
+
+    footer {
+      grid-column: 1 / -1;
+      background: var(--panel-bg);
+      border: 1px solid var(--cyan-dim);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 16px;
+      z-index: 2;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--cyan-dim);
+      color: #fff;
+      padding: 12px 15px;
+      border-radius: 8px;
+      font-size: 0.92rem;
+      outline: none;
+    }
+
+    button {
+      background: rgba(0, 240, 255, 0.14);
+      border: 1px solid var(--cyan);
+      color: var(--cyan);
+      padding: 11px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.82rem;
+      transition: all 0.2s;
+    }
+
+    button:hover {
+      background: var(--cyan);
+      color: #02101f;
+    }
+
+    button.active {
+      background: var(--green);
+      border-color: var(--green);
+      color: #001a0f;
+    }
+  </style>
+</head>
+<body ondragover="event.preventDefault()" ondrop="handleDrop(event)">
+
+  <header>
+    <div class="brand">
+      <span>◉</span>
+      <span>J.A.R.V.I.S. // AUTONOMOUS CAD 3D & MULTIMODAL</span>
+    </div>
+    <div style="display:flex; gap:14px; align-items:center;">
+      <div class="status-pill">
+        <div class="dot" id="ollamaDot"></div>
+        <span id="modelLabel">NÚCLEO AUTÓNOMO ACTIVO</span>
+      </div>
+      <div class="status-pill" id="clockDisplay">00:00:00</div>
+    </div>
+  </header>
+
+  <aside class="panel">
+    <div class="panel-title">
+      <span>Módulos & MCPs</span>
+      <span id="mcpCount">8 Activos</span>
+    </div>
+    <div class="mcp-list" id="mcpList"></div>
+  </aside>
+
+  <main class="center-stage">
+    <div class="reactor-container" id="reactor" title="Haz clic para hablar 1 frase">
+      <div class="ring ring-1"></div>
+      <div class="ring ring-2"></div>
+      <div class="ring ring-3"></div>
+      <div class="core" id="coreText">J.A.R.V.I.S</div>
+    </div>
+    <div class="state-label" id="stateLabel">MODELADO SÓLIDO CAD + ANALIZADOR MULTIMODAL LISTOS</div>
+
+    <div class="quick-tips">
+      <div class="chip" onclick="sendMessage('Crea una brida en Solid Edge de diámetro 150 mm, espesor 16 mm, agujero central de 60 mm, 6 agujeros de 12 mm y redondeo de 3 mm')">⚙️ Modelar Brida con Pernos</div>
+      <div class="chip" onclick="sendMessage('Crea un soporte en L en Solid Edge de largo 120 mm, alto 90 mm, ancho 70 mm, espesor 12 mm y redondeo de 3 mm')">📐 Modelar Soporte en L</div>
+      <div class="chip" onclick="sendMessage('Crea una placa en Solid Edge de 200x140x20 mm con agujero central de 50 mm y 4 agujeros de 14 mm')">🔩 Modelar Placa Perforada</div>
+      <div class="chip" onclick="sendMessage('Ensambla las piezas en Solid Edge')">🧩 Ensamblar Piezas (.ASM)</div>
+      <div class="chip" onclick="document.getElementById('fileInput').click()">📄 Subir Plano PDF -> Pasar a 3D</div>
+    </div>
+
+    <div class="drop-banner" onclick="document.getElementById('fileInput').click()">
+      📥 Arrastra aquí o haz clic para insertar archivos: <b>.STEP, .PAR, .ASM, .PDF, .DOCX, .XLSX, .JPG, .PNG, .MP3, .MP4</b>
+    </div>
+    <input type="file" id="fileInput" style="display:none" onchange="uploadFile(this.files[0])" />
+  </main>
+
+  <section class="panel">
+    <div class="panel-title">
+      <span>Consola de Ingeniería & Comunicaciones</span>
+      <span style="cursor:pointer; color:#ff6b6b;" onclick="resetChat()">[Limpiar]</span>
+    </div>
+    <div class="chat-box" id="chatBox">
+      <div class="msg jarvis">¡Listo, Señor! He actualizado mi motor de ingeniería para Siemens Solid Edge 2026: ahora construyo piezas SÓLIDAS reales (.par) en Modo Ordenado mediante Bocetos 2D, Protrusiones Extruidas, Cortes/Vaciados de cilindros, Redondeos de aristas y el Ensamblaje (.asm). También puede adjuntarme cualquier archivo (.STEP, .PAR, .ASM, PDF, Word, Excel, Fotos, MP3, MP4) con el botón "📎 ARCHIVO".</div>
+    </div>
+  </section>
+
+  <footer>
+    <button id="alwaysListenBtn" onclick="toggleContinuousListen()">🎤 HABLAR</button>
+    <button onclick="document.getElementById('fileInput').click()" title="Subir cualquier archivo CAD, documento, imagen, audio o video">📎 ARCHIVO</button>
+    <input type="text" id="userInput" placeholder="Ordene modelar una pieza en Solid Edge, adjunte un archivo o converse con Jarvis..." onkeydown="if(event.key==='Enter') sendMessage()" />
+    <button onclick="sendMessage()">EJECUTAR ⚡</button>
+    <button id="ttsBtn" class="active" onclick="toggleTTS()">🔊 VOZ: ON</button>
+  </footer>
+
+  <script>
+    let ttsEnabled = true;
+    let recognition = null;
+
+    setInterval(() => {
+      document.getElementById('clockDisplay').textContent = new Date().toLocaleTimeString('es-CO');
+    }, 1000);
+
+    async function loadStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        document.getElementById('modelLabel').textContent = data.active_model;
+        const mcpList = document.getElementById('mcpList');
+        mcpList.innerHTML = '';
+        data.mcps.forEach(m => {
+          const div = document.createElement('div');
+          div.className = 'mcp-item';
+          div.id = `mcp-${m.name}`;
+          div.innerHTML = `
+            <div class="mcp-name">
+              <span>⚡ ${m.name.toUpperCase()}</span>
+              <span style="color:#00ff9d; font-size:0.72rem;">ONLINE</span>
+            </div>
+            <div class="mcp-desc">${m.description}</div>
+          `;
+          mcpList.appendChild(div);
+        });
+      } catch (e) {}
+    }
+
+    function setReactorState(state, text) {
+      const reactor = document.getElementById('reactor');
+      const label = document.getElementById('stateLabel');
+      reactor.classList.remove('listening', 'speaking');
+      if (state) reactor.classList.add(state);
+      label.textContent = text;
+    }
+
+    function speakText(text) {
+      if (!ttsEnabled || !('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      const clean = text.replace(/[*#`_~•📁📄📐⚙️📕📘📊🖼️🎬🧊]/g, '');
+      const utter = new SpeechSynthesisUtterance(clean);
+      utter.lang = 'es-ES';
+      utter.rate = 1.08;
+      utter.pitch = 0.96;
+
+      utter.onstart = () => setReactorState('speaking', 'JARVIS INFORMANDO...');
+      utter.onend = () => setReactorState('', 'SISTEMAS EN LÍNEA');
+      window.speechSynthesis.speak(utter);
+    }
+
+    async function uploadFile(file) {
+      if (!file) return;
+      appendMsg('user', `📎 Archivo adjuntado: ${file.name} (${Math.round(file.size/1024)} KB)`);
+      setReactorState('speaking', `ANALIZANDO ARCHIVO ${file.name.toUpperCase()}...`);
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('prompt', document.getElementById('userInput').value || '');
+
+      try {
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        appendMsg('jarvis', data.reply);
+        setReactorState('', 'ANÁLISIS COMPLETADO');
+        speakText(`Señor, he completado el análisis de su archivo ${file.name}.`);
+      } catch (e) {
+        appendMsg('jarvis', 'Ocurrió un error al analizar el archivo.');
+        setReactorState('', 'ERROR EN ANÁLISIS');
+      }
+    }
+
+    function handleDrop(event) {
+      event.preventDefault();
+      if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+        uploadFile(event.dataTransfer.files[0]);
+      }
+    }
+
+    async function sendMessage(textOverride) {
+      const input = document.getElementById('userInput');
+      const msg = (textOverride || input.value).trim();
+      if (!msg) return;
+      input.value = '';
+
+      appendMsg('user', msg);
+      setReactorState('speaking', 'EJECUTANDO PROCESO AUTÓNOMO...');
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg, use_search: false })
+        });
+        const data = await res.json();
+
+        if (data.tool_used) {
+          const item = document.getElementById(`mcp-${data.tool_used}`);
+          if (item) {
+            item.classList.add('active-tool');
+            setTimeout(() => item.classList.remove('active-tool'), 3500);
+          }
+        }
+
+        appendMsg('jarvis', data.reply);
+        setReactorState('', 'SISTEMAS EN LÍNEA');
+        speakText(data.reply);
+      } catch (err) {
+        appendMsg('jarvis', 'Error de enlace con el servidor local.');
+      }
+    }
+
+    function appendMsg(role, text) {
+      const box = document.getElementById('chatBox');
+      const div = document.createElement('div');
+      div.className = `msg ${role}`;
+      div.textContent = text;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function toggleTTS() {
+      ttsEnabled = !ttsEnabled;
+      const btn = document.getElementById('ttsBtn');
+      btn.textContent = ttsEnabled ? '🔊 VOZ: ON' : '🔇 VOZ: OFF';
+      btn.classList.toggle('active', ttsEnabled);
+      if (!ttsEnabled) window.speechSynthesis.cancel();
+    }
+
+    async function resetChat() {
+      await fetch('/api/reset', { method: 'POST' });
+      document.getElementById('chatBox').innerHTML =
+        '<div class="msg jarvis">Memoria reiniciada, Señor. Estoy listo.</div>';
+    }
+
+    function toggleContinuousListen() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) {
+        alert('Tu navegador no soporta voz directa.');
+        return;
+      }
+      const btn = document.getElementById('alwaysListenBtn');
+
+      if (recognition) {
+        try { recognition.abort(); } catch (e) {}
+        recognition = null;
+        btn.textContent = '🎤 HABLAR';
+        btn.classList.remove('active');
+        setReactorState('', 'MICRÓFONO LIBRE');
+        return;
+      }
+
+      recognition = new SR();
+      recognition.lang = 'es-ES';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      btn.textContent = '🎙️ ESCUCHANDO...';
+      btn.classList.add('active');
+      setReactorState('listening', 'ESCUCHANDO...');
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript.trim();
+        if (transcript) sendMessage(transcript);
+      };
+
+      recognition.onend = () => {
+        try { recognition.abort(); } catch (e) {}
+        recognition = null;
+        btn.textContent = '🎤 HABLAR';
+        btn.classList.remove('active');
+        setReactorState('', 'MICRÓFONO LIBRE');
+      };
+
+      recognition.onerror = () => {
+        try { recognition.abort(); } catch (e) {}
+        recognition = null;
+        btn.textContent = '🎤 HABLAR';
+        btn.classList.remove('active');
+        setReactorState('', 'MICRÓFONO LIBRE');
+      };
+
+      recognition.start();
+    }
+
+    document.getElementById('reactor').addEventListener('click', toggleContinuousListen);
+    loadStatus();
+  </script>
+</body>
+</html>
