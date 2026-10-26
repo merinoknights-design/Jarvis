@@ -7,25 +7,26 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 OLLAMA_APP = Path.home() / "AppData" / "Local" / "Programs" / "Ollama" / "ollama app.exe"
-GIT_EXE = Path(r"C:\Program Files\Git\cmd\git.exe")
 PYTHON_EXE = BASE_DIR / "venv" / "Scripts" / "python.exe"
 SERVER_SCRIPT = BASE_DIR / "server.py"
 APP_URL = "http://127.0.0.1:7777"
+GITHUB_ARCHIVE_URL = "https://github.com/merinoknights-design/Jarvis/archive/refs/heads/main.tar.gz"
 
 
 def auto_update_from_github():
-    """Descarga automáticamente cualquier actualización nueva desde el repositorio de GitHub al iniciar."""
-    git_cmd = str(GIT_EXE) if GIT_EXE.exists() else "git"
-    if (BASE_DIR / ".git").exists():
-        try:
+    """Actualiza J.A.R.V.I.S. directamente desde GitHub sin requerir Git instalado en el PC."""
+    try:
+        tar_file = BASE_DIR / "update_pkg.tar.gz"
+        urllib.request.urlretrieve(GITHUB_ARCHIVE_URL, str(tar_file))
+        if tar_file.exists():
             subprocess.run(
-                [git_cmd, "pull", "--rebase", "--autostash"],
-                cwd=str(BASE_DIR),
-                timeout=8,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                ["tar.exe", "-xzf", str(tar_file), "--strip-components=1", "-C", str(BASE_DIR)],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=10
             )
-        except Exception:
-            pass
+            tar_file.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def is_port_open(url: str) -> bool:
