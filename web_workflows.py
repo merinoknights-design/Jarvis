@@ -12,6 +12,8 @@ from ui_controller import (
     click_ui_element_by_uia_or_ocr,
     find_matches_in_region_fast,
     find_text_on_screen_and_click,
+    normalize_name_for_match,
+    names_match_ignoring_emojis_and_accents,
     mouse_click,
     mouse_scroll,
     send_text_and_keys,
@@ -260,18 +262,23 @@ def _search_select_and_rectify_whatsapp_contact_fast(
         pyautogui.press("backspace")
         time.sleep(0.08)
 
-        # 2. Escribir el nombre del nuevo contacto
-        send_text_and_keys(contact_formatted, press_enter=False)
+        # 2. Escribir únicamente las letras/números del nombre (sin emojis) para que el buscador de WhatsApp filtre limpio
+        clean_search_query = re.sub(r"[^\w\sáéíóúÁÉÍÓÚñÑ\+\-]", "", contact_formatted).strip() or contact_formatted
+        send_text_and_keys(clean_search_query, press_enter=False)
         time.sleep(0.85)
 
-        # 3. Escaneo OCR de los resultados debajo de 'Chats' ((60, 350, 520, 700))
-        rows = find_matches_in_region_fast(contact_formatted, results_box)
+        # 3. Escaneo OCR de los resultados debajo de 'Chats' ((60, 350, 520, 700)) ignorando emojis y ñ/tildes
+        rows = find_matches_in_region_fast(clean_search_query, results_box)
         if rows:
-            exact_rows = [r for r in rows if r[2].strip().lower() == contact_formatted.lower()]
+            norm_q = normalize_name_for_match(clean_search_query)
+            exact_rows = [
+                r for r in rows
+                if normalize_name_for_match(r[2]) == norm_q or names_match_ignoring_emojis_and_accents(clean_search_query, r[2])
+            ]
             chosen = exact_rows[0] if exact_rows else sorted(rows, key=lambda item: item[1])[0]
             mouse_click(chosen[0], chosen[1], button="left", double=False)
             time.sleep(0.65)
-            ok_header, h_txt = _verify_header_fast(contact_formatted, left, top, right, bottom)
+            ok_header, h_txt = _verify_header_fast(clean_search_query, left, top, right, bottom)
             if ok_header or exact_rows:
                 return True, f"Cambié al chat de '{chosen[2]}' ({chosen[0]}, {chosen[1]}) y verifiqué su apertura."
         else:

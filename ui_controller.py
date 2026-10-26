@@ -5,6 +5,7 @@ import re
 import subprocess
 import threading
 import time
+import unicodedata
 import urllib.parse
 from pathlib import Path
 from typing import Optional, Tuple, List
@@ -166,6 +167,42 @@ def focus_and_maximize_chrome_window(title_keyword: str = "") -> Optional[Tuple[
     return (0, 0, sw, sh)
 
 
+def normalize_name_for_match(text: str) -> str:
+    """
+    Normaliza cualquier nombre o texto eliminando:
+    - Tildes y virgulilla de la ñ (Niña -> Nina, Matías -> Matias, Gutiérrez -> Gutierrez)
+    - Emojis (❤️‍🩹, ❤️, 😂, etc.) y símbolos especiales
+    para que el OCR coincida siempre por el nombre aunque tenga emojis o ñ/tildes.
+    """
+    if not text:
+        return ""
+    decomposed = unicodedata.normalize("NFD", text)
+    no_diacritics = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+    only_alnum = re.sub(r"[^a-zA-Z0-9\s]", " ", no_diacritics)
+    return re.sub(r"\s+", " ", only_alnum).strip().lower()
+
+
+def names_match_ignoring_emojis_and_accents(target_name: str, detected_text: str) -> bool:
+    """
+    Compara un nombre buscado (ej. 'Mi Niña Chiquita') contra el texto leído por OCR (ej. 'Mi Nina Chiquita ❤️‍🩹')
+    ignorando emojis, tildes y la ñ->n.
+    """
+    norm_target = normalize_name_for_match(target_name)
+    norm_detected = normalize_name_for_match(detected_text)
+    if not norm_target or not norm_detected:
+        return False
+    if norm_target in norm_detected:
+        return True
+    if len(norm_detected) >= 4 and norm_detected in norm_target:
+        return True
+
+    target_words = [w for w in norm_target.split() if len(w) >= 2]
+    detected_words = set(norm_detected.split())
+    if target_words and all(any(tw in dw or dw in tw for dw in detected_words if len(dw) >= 2) for tw in target_words):
+        return True
+    return False
+
+
 def click_ui_element_by_uia_or_ocr(target_text: str, double_click: bool = False, right_click: bool = False) -> Optional[Tuple[int, int]]:
     """
     1. Primero inspecciona los controles reales (botones, menús, pestañas, enlaces) de la ventana activa
@@ -186,8 +223,8 @@ def click_ui_element_by_uia_or_ocr(target_text: str, double_click: bool = False,
                 continue
             try:
                 for ctrl in win.descendants():
-                    c_name = (ctrl.window_text() or "").strip().lower()
-                    if c_name and target_low in c_name:
+                    c_name = (ctrl.window_text() or "").strip()
+                    if c_name and names_match_ignoring_emojis_and_accents(target_low, c_name):
                         rect = ctrl.rectangle()
                         cx = int((rect.left + rect.right) / 2)
                         cy = int((rect.top + rect.bottom) / 2)
@@ -207,13 +244,11 @@ def find_matches_in_region_fast(
     target_text: str, region_box: Tuple[int, int, int, int]
 ) -> List[Tuple[int, int, str]]:
     """
-    Escaneo OCR ultrarrápido (~0.08s) recortando ÚNICAMENTE la subregión necesaria (x1, y1, x2, y2),
-    sin recorrer miles de nodos DOM ni procesar toda la pantalla 1920x1080.
-    Devuelve coordenadas absolutas de pantalla (cx, cy, texto).
+    Escaneo OCR ultrarrápido recortando ÚNICAMENTE la subregión necesaria (x1, y1, x2, y2).
+    Compara los nombres ignorando emojis, tildes y ñ->n.
     """
     matches: List[Tuple[int, int, str]] = []
-    target_low = target_text.lower().strip()
-    if not target_low:
+    if not normalize_name_for_match(target_text):
         return matches
 
     x1, y1, x2, y2 = region_box
@@ -227,7 +262,7 @@ def find_matches_in_region_fast(
         if result:
             for item in result:
                 box, detected_text, _ = item[0], item[1], item[2]
-                if target_low in detected_text.lower():
+                if names_match_ignoring_emojis_and_accents(target_text, detected_text):
                     xs = [pt[0] for pt in box]
                     ys = [pt[1] for pt in box]
                     cx = int(x1 + sum(xs) / 4.0)
