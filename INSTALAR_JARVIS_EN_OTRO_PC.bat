@@ -36,8 +36,8 @@ start "" "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe"
 timeout /t 4 /nobreak > nul
 "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" pull qwen2.5:1.5b
 
-echo [5/5] Creando acceso directo de J.A.R.V.I.S. en el Escritorio...
-powershell -Command "$WshShell = New-Object -ComObject WScript.Shell; $Desktop = [Environment]::GetFolderPath('Desktop'); $Shortcut = $WshShell.CreateShortcut(\"$Desktop\J.A.R.V.I.S..lnk\"); $Shortcut.TargetPath = 'C:\Jarvis\venv\Scripts\pythonw.exe'; $Shortcut.Arguments = 'C:\Jarvis\JarvisApp.pyw'; $Shortcut.WorkingDirectory = 'C:\Jarvis'; $Shortcut.IconLocation = 'C:\Windows\System32\shell32.dll,13'; $Shortcut.Save()"
+echo [5/5] Creando aplicacion y carpeta de J.A.R.V.I.S. en el Escritorio...
+powershell -Command "$WshShell = New-Object -ComObject WScript.Shell; $Desktop = [Environment]::GetFolderPath('Desktop'); $Shortcut = $WshShell.CreateShortcut(\"$Desktop\J.A.R.V.I.S..lnk\"); $Shortcut.TargetPath = 'C:\Jarvis\venv\Scripts\pythonw.exe'; $Shortcut.Arguments = 'C:\Jarvis\JarvisApp.pyw'; $Shortcut.WorkingDirectory = 'C:\Jarvis'; $Shortcut.IconLocation = 'C:\Windows\System32\shell32.dll,13'; $Shortcut.Save(); $FolderLink = $WshShell.CreateShortcut(\"$Desktop\Carpeta J.A.R.V.I.S..lnk\"); $FolderLink.TargetPath = 'C:\Jarvis'; $FolderLink.IconLocation = 'C:\Windows\System32\shell32.dll,3'; $FolderLink.Save()"
 
 echo.
 echo  ╔══════════════════════════════════════════════════════════╗
