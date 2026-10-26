@@ -604,6 +604,27 @@
 
     document.getElementById('reactor').addEventListener('click', toggleContinuousListen);
     loadStatus();
+
+    // Bucle en tiempo real que revisa las tareas en segundo plano de Jarvis y avisa por voz al terminar
+    setInterval(async () => {
+      try {
+        const res = await fetch('/api/notifications');
+        const data = await res.json();
+
+        if (data.active_tasks && data.active_tasks.length > 0) {
+          document.getElementById('stateLabel').textContent =
+            `⏳ TAREA EN 2º PLANO: ${data.active_tasks[0].title.toUpperCase()}...`;
+        }
+
+        if (data.completed && data.completed.length > 0) {
+          data.completed.forEach(notif => {
+            appendMsg('jarvis', notif.message);
+            speakText(notif.voice_summary || notif.message);
+            setReactorState('', 'TAREA EN 2º PLANO COMPLETADA CON ÉXITO');
+          });
+        }
+      } catch (e) {}
+    }, 1500);
   </script>
 </body>
 </html>

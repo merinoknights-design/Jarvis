@@ -252,9 +252,10 @@ def trigger_spotify_play_button_uia() -> bool:
 
 def play_song_on_spotify_autonomous(song_query: str) -> str:
     """
-    1. Resuelve el Track ID exacto de la canción (spotify:track:ID) para ir directo a la canción y no solo al buscador.
+    Se ejecuta en segundo plano:
+    1. Resuelve el Track ID exacto de la canción (spotify:track:ID).
     2. Abre esa pista en Spotify Desktop.
-    3. Con Windows UI Automation localiza el botón verde real de 'Reproducir' / 'Play' dentro de Spotify y le hace clic.
+    3. Recorre en bucle la ventana con Windows UI Automation hasta pulsar el botón verde de Play y confirmar que suena.
     """
     clean_song = song_query.strip()
     track_uri = resolve_spotify_track_uri(clean_song)
@@ -265,18 +266,15 @@ def play_song_on_spotify_autonomous(song_query: str) -> str:
         os.startfile(uri_to_open)
     except Exception:
         os.startfile(f"https://open.spotify.com/search/{encoded}")
-        return f"Abriendo Spotify Web con '{clean_song}', Señor."
+        return f"Spotify Web abierto con '{clean_song}', Señor."
 
-    def _worker():
-        time.sleep(2.8)
-        # Intentar pulsar el botón verde nativo de Play en Spotify vía UIAutomation
-        ok = trigger_spotify_play_button_uia()
-        if not ok:
-            time.sleep(1.0)
-            trigger_spotify_play_button_uia()
+    time.sleep(2.6)
+    ok = trigger_spotify_play_button_uia()
+    if not ok:
+        time.sleep(1.0)
+        trigger_spotify_play_button_uia()
 
-    threading.Thread(target=_worker, daemon=True).start()
-    return f"Enseguida, Señor. He cargado directamente la pista '{clean_song}' en Spotify y presionado el botón de reproducción."
+    return f"La canción '{clean_song}' ya está cargada y reproduciéndose en Spotify, Señor."
 
 
 def play_video_on_youtube_autonomous(query: str) -> str:

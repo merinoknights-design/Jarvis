@@ -26,6 +26,7 @@ from cad_engine import (
 from file_analyzer import analyze_any_file, UPLOAD_DIR
 from git_sync import set_github_remote, push_update_to_github, pull_update_from_github
 from intent_engine import classify_user_intent
+from task_manager import run_background_task, pop_completed_notifications
 from ui_controller import (
     play_song_on_spotify_autonomous,
     play_video_on_youtube_autonomous,
@@ -161,7 +162,15 @@ def instant_conversational_and_action_brain(user_msg: str) -> Optional[Dict[str,
     if intent == "PLAY_SPOTIFY":
         song = intent_data.get("song_query", "").strip()
         if song and song.lower() not in ["spotify", "música", "musica"]:
-            return {"reply": play_song_on_spotify_autonomous(song), "tool_used": "puppeteer"}
+            run_background_task(
+                f"Reproducir '{song}' en Spotify",
+                lambda: play_song_on_spotify_autonomous(song),
+                tool_name="puppeteer"
+            )
+            return {
+                "reply": f"Enseguida, Señor. Estoy buscando y poniendo '{song}' en Spotify en segundo plano; le avisaré en unos segundos apenas esté sonando.",
+                "tool_used": "puppeteer"
+            }
         try:
             os.startfile("spotify:")
         except Exception:
@@ -252,24 +261,29 @@ def instant_conversational_and_action_brain(user_msg: str) -> Optional[Dict[str,
     )
     if cad_explicit:
         if "v8" in low or "conjunto" in low:
-            try:
+            def _cad_v8_job():
                 res = generate_full_v8_project_in_solidedge("Conjunto_Mecanico", PROJECTS_ROOT)
                 recent_created_parts.extend([f for f in res["created_files"] if f.endswith(".par")])
                 files_list = "\n".join([f"  • {Path(f).name}" for f in res["created_files"]])
-                return {"reply": f"Conjunto de piezas sólidas y ensamblaje creado en Modo Ordenado en Solid Edge 2026:\n{files_list}", "tool_used": "filesystem"}
-            except Exception as e:
-                return {"reply": f"Detalle con Solid Edge: {e}", "tool_used": "filesystem"}
+                return f"Conjunto de piezas sólidas y ensamblaje terminado en Modo Ordenado en Solid Edge 2026:\n{files_list}"
+
+            run_background_task("Modelar Conjunto Sólido en Solid Edge 2026", _cad_v8_job, tool_name="filesystem")
+            return {
+                "reply": "Enseguida, Señor. He iniciado en segundo plano el modelado 3D en Modo Ordenado de todas las piezas y su ensamblaje en Solid Edge 2026. Le avisaré apenas termine.",
+                "tool_used": "filesystem"
+            }
         else:
-            try:
+            def _cad_part_job():
                 res = generate_custom_solid_part(cleaned, PROJECTS_ROOT / "Piezas_Personalizadas")
                 recent_created_parts.append(res["file"])
                 ops = "\n".join([f"  {op}" for op in res.get("tree_operations", [])])
-                return {
-                    "reply": f"¡Pieza sólida creada en Modo Ordenado en Solid Edge 2026, Señor!\nÁrbol de Trabajo (PathFinder):\n{ops}\nArchivo guardado: {res['file']}",
-                    "tool_used": "filesystem"
-                }
-            except Exception as e:
-                return {"reply": f"No pude conectar con Solid Edge 2026: {e}", "tool_used": "filesystem"}
+                return f"Pieza sólida terminada en Modo Ordenado en Solid Edge 2026:\nÁrbol de Trabajo (PathFinder):\n{ops}\nArchivo guardado: {res['file']}"
+
+            run_background_task("Modelar Pieza Sólida en Solid Edge 2026", _cad_part_job, tool_name="filesystem")
+            return {
+                "reply": "Orden recibida, Señor. Estoy construyendo la pieza sólida por bocetos, protrusiones y redondeos en segundo plano dentro de Solid Edge 2026; le avisaré apenas esté lista.",
+                "tool_used": "filesystem"
+            }
 
     # 6. CONTROL DE INTERFAZ GRÁFICA (CLICS POR VISIÓN OCR, SCROLL, TECLADO, COMENTARIOS Y MULTIMEDIA)
     # 6.1 Hacer clic sobre cualquier palabra o botón en pantalla usando Visión OCR
@@ -459,6 +473,12 @@ async def detect_best_model() -> Optional[str]:
     except Exception:
         pass
     return None
+
+
+@app.get("/api/notifications")
+async def get_notifications():
+    """Devuelve las tareas en segundo plano que acaban de terminar para que Jarvis avise al usuario."""
+    return pop_completed_notifications()
 
 
 @app.post("/api/shutdown")
