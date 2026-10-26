@@ -222,8 +222,8 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
     ]:
         return {"reply": "Sí, Señor. Lo escucho, dígame qué necesita.", "tool_used": "memory"}
 
-    # Conexión de API Key de Gemini por comando de voz o texto (ej. "conecta gemini con AIzaSy...")
-    key_match = re.search(r"(AIza[0-9A-Za-z\-_]{30,})", user_msg)
+    # Conexión de API Key de Gemini por comando de voz o texto (soporta claves AQ.... y AIza...)
+    key_match = re.search(r"((?:AQ\.|AIza)[0-9A-Za-z\-_]{30,})", user_msg)
     if key_match:
         save_gemini_api_key(key_match.group(1))
         return {

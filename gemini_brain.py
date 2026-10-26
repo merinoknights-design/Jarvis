@@ -25,7 +25,9 @@ def get_gemini_api_key() -> str:
     if GEMINI_CONFIG_FILE.exists():
         try:
             data = json.loads(GEMINI_CONFIG_FILE.read_text(encoding="utf-8"))
-            return (data.get("api_key") or "").strip()
+            saved = (data.get("api_key") or "").strip()
+            if saved:
+                return saved
         except Exception:
             pass
     return ""
@@ -67,27 +69,32 @@ async def ask_gemini_with_google_search(
     full_prompt = user_query + (f"\n\n[Contexto del sistema]:\n{extra_context}" if extra_context else "")
     contents.append({"role": "user", "parts": [{"text": full_prompt}]})
 
-    for model_name in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+    # Modelos Gemini 3.5 / 3.6 / Argon habilitados en la cuenta del usuario (0.8s de respuesta)
+    for model_name in [
+        "gemini-3.5-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-4-argon",
+    ]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
         payload = {
             "system_instruction": {"parts": [{"text": system_instruction}]},
             "contents": contents,
-            "tools": [{"google_search": {}}],
-            "generationConfig": {"temperature": 0.65, "maxOutputTokens": 400},
+            "generationConfig": {"temperature": 0.65, "maxOutputTokens": 450},
         }
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=9.0) as client:
                 r = await client.post(url, json=payload)
-                if r.status_code != 200:
-                    # En Gemini 2.0/2.5 el tool puede llamarse google_search o google_search_retrieval, o ejecutarse con el contexto web enriquecido
-                    payload.pop("tools", None)
-                    r = await client.post(url, json=payload)
                 if r.status_code == 200:
                     data = r.json()
                     candidates = data.get("candidates", [])
                     if candidates:
                         parts = candidates[0].get("content", {}).get("parts", [])
-                        text_out = " ".join(p.get("text", "") for p in parts if p.get("text")).strip()
+                        # Filtrar partes internas de pensamiento ('thought': True) para entregar solo la respuesta final limpia
+                        text_out = " ".join(
+                            p.get("text", "") for p in parts if p.get("text") and not p.get("thought")
+                        ).strip()
                         if text_out:
                             return text_out
         except Exception:
