@@ -26,37 +26,46 @@ def parse_whatsapp_order(raw_order: str) -> Tuple[str, str]:
     - "escríbele a Carlos por whatsapp qué más pues"
     - "manda un whatsapp a Mamá: bendición"
     """
-    cleaned = re.sub(r"\b(?:en|por|de|desde)\s+whatsapp(?:\s+web)?\b", "", raw_order, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r"^(?:abre\s+whatsapp\s*(?:,\s*|\s+y\s+)?)", "", cleaned, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"\b(?:en|por|de|desde)\s+whatsapp(?:\s+web)?\b", "", raw_order, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    def _clean_contact_name(raw_c: str) -> str:
+        c = raw_c.strip(" ,:.'\"")
+        c = re.sub(
+            r"^(?:abre\s+whatsapp\s*,\s*|entra\s+|ve\s+|busca\s+|manda\s+|env[ií]a\s+|escribe\s+|un\s+mensaje\s+|el\s+mensaje\s+|un\s+whatsapp\s+|al\s+perfil\s+de\s+|el\s+perfil\s+de\s+|perfil\s+de\s+|al\s+contacto\s+|contacto\s+|al\s+chat\s+de\s+|chat\s+de\s+|para\s+|a\s+)+",
+            "",
+            c,
+            flags=re.IGNORECASE,
+        ).strip(" ,:.'\"")
+        return c
 
     patterns = [
-        # 1. "... a [Contacto] diciendo / que diga / con el mensaje / : [Mensaje]"
-        r"(?:a|para|al\s+contacto|al\s+perfil\s+de|al\s+chat\s+de|busca\s+a)\s+([^,:]+?)\s+(?:diciendo|que\s+diga|con\s+el\s+mensaje|con\s+el\s+texto|y\s+dile|y\s+m[aá]ndale|y\s+env[ií]ale|y\s+escr[ií]bele|y\s+ponle|[:])\s*(.+)$",
+        # 1. "... a / al perfil de [Contacto] diciendo / que diga / con el mensaje / : [Mensaje]"
+        r"\b(?:al\s+perfil\s+de|perfil\s+de|al\s+contacto|al\s+chat\s+de|busca\s+a|para|a)\s+([^,:]+?)\s+(?:diciendo|que\s+diga|con\s+el\s+mensaje|con\s+el\s+texto|y\s+dile|y\s+m[aá]ndale|y\s+env[ií]ale|y\s+escr[ií]bele|y\s+ponle|[:])\s*(.+)$",
         # 2. "... perfil de [Contacto] y manda/escribe (el mensaje) [Mensaje]"
-        r"(?:perfil\s+de|chat\s+de|contacto|busca\s+a|a)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\s\+\-]+?)\s+y\s+(?:manda|m[aá]ndale|env[ií]a|env[ií]ale|escribe|escr[ií]bele|pon|ponle)\s+(?:el\s+mensaje\s+|un\s+mensaje\s+)?(?:diciendo\s+|que\s+diga\s+)?(.+)$",
+        r"\b(?:al\s+perfil\s+de|perfil\s+de|al\s+chat\s+de|chat\s+de|al\s+contacto|contacto|busca\s+a|para|a)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\s\+\-]+?)\s+y\s+(?:manda|m[aá]ndale|env[ií]a|env[ií]ale|escribe|escr[ií]bele|pon|ponle)\s+(?:el\s+mensaje\s+|un\s+mensaje\s+)?(?:diciendo\s+|que\s+diga\s+)?(.+)$",
         # 3. "diciendo [Mensaje] a [Contacto]"
-        r"(?:diciendo|que\s+diga|mensaje)\s+['\"]?(.+?)['\"]?\s+(?:a|para)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\s\+\-]+)$",
-        # 4. "manda un mensaje a [Contacto] [Mensaje]" (1 a 3 palabras de contacto seguidas del mensaje)
-        r"(?:manda|mandar|env[ií]a|enviar|escribe|escr[ií]bele|m[aá]ndale)\s+(?:un\s+mensaje\s+|un\s+whatsapp\s+|el\s+mensaje\s+)?(?:a|para)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+(?:\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+)?)\s+(.+)$",
+        r"\b(?:diciendo|que\s+diga|mensaje)\s+['\"]?(.+?)['\"]?\s+\b(?:a|para)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\s\+\-]+)$",
+        # 4. "manda un mensaje a [Contacto] [Mensaje]"
+        r"\b(?:manda|mandar|env[ií]a|enviar|escribe|escr[ií]bele|m[aá]ndale)\s+(?:un\s+mensaje\s+|un\s+whatsapp\s+|el\s+mensaje\s+)?\b(?:a|para)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+)\s+(.+)$",
     ]
 
     for idx, pat in enumerate(patterns):
         m = re.search(pat, cleaned, re.IGNORECASE)
         if m:
             if idx == 2:
-                msg, contact = m.group(1).strip(), m.group(2).strip()
+                msg, contact = m.group(1).strip(), _clean_contact_name(m.group(2))
             else:
-                contact, msg = m.group(1).strip(), m.group(2).strip()
-            contact = re.sub(r"\b(?:en|por)\s+whatsapp\b", "", contact, flags=re.IGNORECASE).strip(" ,:.'\"")
+                contact, msg = _clean_contact_name(m.group(1)), m.group(2).strip()
             msg = msg.strip(" '\"")
             if contact and msg:
                 return contact, msg
 
-    # Si solo mencionó el contacto sin cuerpo de mensaje (ej. "manda un mensaje en whatsapp a Juan")
-    m_only_contact = re.search(r"(?:a|para|al\s+perfil\s+de|busca\s+a)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\s\+\-]+)$", cleaned, re.IGNORECASE)
+    m_only_contact = re.search(r"\b(?:al\s+perfil\s+de|busca\s+a|para|a)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\s\+\-]+)$", cleaned, re.IGNORECASE)
     if m_only_contact:
-        c = m_only_contact.group(1).strip(" ,:.'\"")
-        return c, "Hola"
+        c = _clean_contact_name(m_only_contact.group(1))
+        if c:
+            return c, "Hola"
 
     return "", ""
 
