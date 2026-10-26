@@ -73,13 +73,13 @@ async def ask_gemini_with_google_search(
             "system_instruction": {"parts": [{"text": system_instruction}]},
             "contents": contents,
             "tools": [{"google_search": {}}],
-            "generationConfig": {"temperature": 0.65, "maxOutputTokens": 350},
+            "generationConfig": {"temperature": 0.65, "maxOutputTokens": 400},
         }
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 r = await client.post(url, json=payload)
                 if r.status_code != 200:
-                    # Reintentar sin tool google_search si el modelo/tier no admite grounding directo
+                    # En Gemini 2.0/2.5 el tool puede llamarse google_search o google_search_retrieval, o ejecutarse con el contexto web enriquecido
                     payload.pop("tools", None)
                     r = await client.post(url, json=payload)
                 if r.status_code == 200:

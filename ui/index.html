@@ -370,6 +370,19 @@
   </header>
 
   <aside class="panel">
+    <div style="margin-bottom:10px; padding:10px; background:rgba(0,240,255,0.08); border:1px solid var(--cyan); border-radius:8px;">
+      <div style="font-size:0.74rem; color:var(--cyan); font-weight:700; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+        <span>✨ API GOOGLE GEMINI</span>
+        <span id="geminiStatusBadge" style="color:#ffaa00; font-size:0.7rem;">CONECTAR</span>
+      </div>
+      <div style="display:flex; gap:5px;">
+        <input type="password" id="geminiKeyInput" placeholder="Pega tu API Key aquí (AIza...)" style="padding:7px 9px; font-size:0.76rem; flex:1; background:rgba(0,0,0,0.65); border:1px solid var(--cyan-dim); color:#fff; border-radius:6px;" onkeydown="if(event.key==='Enter') saveGeminiKeyFromBox()" />
+        <button onclick="saveGeminiKeyFromBox()" style="padding:7px 10px; font-size:0.74rem;">ACTIVAR</button>
+      </div>
+      <div style="font-size:0.69rem; color:#9beeff; margin-top:5px; cursor:pointer; text-decoration:underline;" onclick="sendMessage('Abre https://aistudio.google.com/app/apikey')">
+        🔑 Crear/copiar API Key gratis en Google AI Studio
+      </div>
+    </div>
     <div class="panel-title">
       <span>Módulos & MCPs</span>
       <span id="mcpCount">8 Activos</span>
@@ -445,6 +458,12 @@
         const res = await fetch('/api/status');
         const data = await res.json();
         document.getElementById('modelLabel').textContent = data.active_model;
+        const badge = document.getElementById('geminiStatusBadge');
+        const pill = document.getElementById('geminiPill');
+        if (data.gemini_connected) {
+          if (badge) { badge.textContent = '🟢 ACTIVA'; badge.style.color = '#00ff9d'; }
+          if (pill) { pill.textContent = '✨ GEMINI API: ACTIVA'; }
+        }
         const mcpList = document.getElementById('mcpList');
         mcpList.innerHTML = '';
         data.mcps.forEach(m => {
@@ -618,6 +637,28 @@
       await fetch('/api/reset', { method: 'POST' });
       document.getElementById('chatBox').innerHTML =
         '<div class="msg jarvis">Memoria reiniciada, Señor. Estoy listo.</div>';
+    }
+
+    async function saveGeminiKeyFromBox() {
+      const inp = document.getElementById('geminiKeyInput');
+      const key = (inp ? inp.value : '').trim();
+      if (!key) {
+        alert('Pega primero tu API Key de Google Gemini (empieza por AIza...) en la casilla.');
+        return;
+      }
+      const res = await fetch('/api/gemini/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: key })
+      });
+      const data = await res.json();
+      if (data.connected) {
+        inp.value = '';
+        inp.placeholder = '✔ API Key de Gemini guardada y activa';
+        appendMsg('jarvis', '¡Listo, Señor! Su API Key de Google Gemini ha quedado guardada y conectada como mi fuente principal de búsqueda y razonamiento.');
+        speakText('Listo, Señor. Su clave API de Google Gemini ya está activa.');
+        loadStatus();
+      }
     }
 
     async function configureGeminiKey() {
