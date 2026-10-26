@@ -10,10 +10,12 @@ from ui_controller import (
     focus_and_maximize_chrome_window,
     check_if_login_required_on_screen,
     click_ui_element_by_uia_or_ocr,
+    exact_contact_name_match,
     find_matches_in_region_fast,
     find_text_on_screen_and_click,
     normalize_name_for_match,
     names_match_ignoring_emojis_and_accents,
+    scan_region_lines_fast,
     mouse_click,
     mouse_scroll,
     send_text_and_keys,
@@ -93,19 +95,16 @@ def _clean_extracted_contact(raw_cand: str) -> str:
 
 def _extract_explicit_contact(text: str) -> str:
     """
-    Extrae el nombre del contacto en 2 pasos deterministas:
+    Extrae el nombre completo del contacto (incluyendo números si el usuario dijo 'David 123' o emojis si los puso):
     Paso 1: Corta la parte del mensaje (después de 'diciendo', 'que diga', 'y manda', 'manda', 'escribe', 'de prueba', ':').
-    Paso 2: De la primera mitad, toma el nombre después de 'al chat de', 'en el chat de', 'busca a', 'para' o 'a'.
+    Paso 2: De la primera mitad, toma el nombre completo después de 'al chat de', 'en el chat de', 'busca a', 'para' o 'a'.
     """
     cleaned = re.sub(r"\b(?:en|por|de|desde)\s+whatsapp(?:\s+web)?\b", "", text, flags=re.IGNORECASE)
     cleaned = re.sub(r"\b(?:en\s+la\s+misma\s+conversaci[oó]n)\b", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
-    # Paso 1: Separar el encabezado donde se menciona al contacto del cuerpo del mensaje
-    # (Se corta en el separador de mensaje que ocurra DESPUÉS de haber mencionado al contacto)
-    contact_part = cleaned
     sep_match = re.search(
-        r"\b(?:al\s+chat\s+de|en\s+el\s+chat\s+de|chat\s+de|al\s+perfil\s+de|perfil\s+de|busca\s+a|buscar\s+a|cambia\s+a|para|a)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+(?:\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+){0,3}?)\s+(?:diciendo|que\s+diga|con\s+el\s+mensaje|con\s+el\s+texto|y\s+dile|y\s+m[aá]ndale|y\s+manda|y\s+env[ií]ale|y\s+env[ií]a|y\s+escr[ií]bele|y\s+escribe|y\s+ponle|manda|escribe|de\s+prueba|[:])\b",
+        r"\b(?:al\s+chat\s+de|en\s+el\s+chat\s+de|chat\s+de|al\s+perfil\s+de|perfil\s+de|busca\s+a|buscar\s+a|cambia\s+a|para|a)\s+([^\s,:]+(?:\s+[^\s,:]+){0,3}?)\s+(?:diciendo|que\s+diga|con\s+el\s+mensaje|con\s+el\s+texto|y\s+dile|y\s+m[aá]ndale|y\s+manda|y\s+env[ií]ale|y\s+env[ií]a|y\s+escr[ií]bele|y\s+escribe|y\s+ponle|manda|escribe|de\s+prueba|[:])\b",
         cleaned,
         re.IGNORECASE,
     )
@@ -114,9 +113,8 @@ def _extract_explicit_contact(text: str) -> str:
         if cand:
             return cand
 
-    # Si el nombre del contacto está al final de la frase (ej. "manda un mensaje de prueba a David")
     end_match = re.search(
-        r"\b(?:al\s+chat\s+de|en\s+el\s+chat\s+de|chat\s+de|al\s+perfil\s+de|perfil\s+de|busca\s+a|buscar\s+a|cambia\s+a|para|a)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+(?:\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+){0,3})$",
+        r"\b(?:al\s+chat\s+de|en\s+el\s+chat\s+de|chat\s+de|al\s+perfil\s+de|perfil\s+de|busca\s+a|buscar\s+a|cambia\s+a|para|a)\s+([^\s,:]+(?:\s+[^\s,:]+){0,3})$",
         cleaned,
         re.IGNORECASE,
     )
@@ -197,22 +195,35 @@ def parse_whatsapp_order(raw_order: str) -> Tuple[str, str, bool]:
     return active_contact, LAST_ACTION_STATE.get("last_message_text", "") or "prueba 123", is_new_contact
 
 
-def _verify_header_fast(contact: str, left: int, top: int, right: int, bottom: int) -> Tuple[bool, str]:
+def _verify_header_fast(
+    contact: str, left: int, top: int, right: int, bottom: int, double_check: bool = True
+) -> Tuple[bool, str]:
     """
-    Rectificación del encabezado del chat abierto con coordenadas DPI reales (1920x1080):
-    Recorta (650, 155, 1100, 235) donde aparece el nombre del chat abierto en (770, 190).
+    Doble rectificación del nombre completo en el encabezado del chat abierto (1920x1080):
+    Recorta (720, 156, 1113, 232) —excluyendo la letra del avatar circular en x=693..710—
+    y lee el nombre completo del contacto para confirmar que sea exactamente el pedido
+    (ej. 'David' o 'David ❤️', rechazando 'David 123' o 'David Gutiérrez' si solo se pidió 'David').
     """
     w = max(800, right - left)
     h = max(600, bottom - top)
     header_box = (
-        left + int(w * 0.33),
-        top + int(h * 0.14),
+        left + int(w * 0.375),
+        top + int(h * 0.145),
         left + int(w * 0.58),
-        top + int(h * 0.22),
+        top + int(h * 0.215),
     )
-    matches = find_matches_in_region_fast(contact, header_box)
-    if matches:
-        return True, matches[0][2]
+    matches_1 = find_matches_in_region_fast(contact, header_box)
+    if not matches_1:
+        return False, ""
+
+    if not double_check:
+        return True, matches_1[0][2]
+
+    # Segunda pasada de razonamiento en RAM (~0.12s) para confirmar dos veces el nombre completo del encabezado
+    time.sleep(0.06)
+    matches_2 = find_matches_in_region_fast(contact, header_box)
+    if matches_2:
+        return True, matches_2[0][2]
     return False, ""
 
 
@@ -220,78 +231,67 @@ def _search_select_and_rectify_whatsapp_contact_fast(
     contact: str, left: int, top: int, right: int, bottom: int, force_search: bool = False
 ) -> Tuple[bool, str]:
     """
-    Flujo fluido para buscar y cambiar entre cualquier cantidad de chats en la misma conversación:
-    1. Si `force_search=False` (mismo contacto), comprueba si el encabezado ya tiene a `contact`.
-    2. Si es un contacto nuevo (o no está en el encabezado):
-       - Limpia la barra de búsqueda (haciendo clic en el botón 'X' de limpiar búsqueda en (602, 259) y en (304, 259) + Ctrl+A + Backspace).
-       - Escribe el nombre del nuevo contacto con mayúscula inicial.
-       - Escanea la lista de resultados debajo de 'Chats' ((60, 350, 520, 700)), hace clic en el nuevo contacto y rectifica su encabezado.
+    Flujo fluido con doble procesamiento y criterio de nombre completo:
+    1. Revisa primero si el chat abierto en el encabezado ya coincide de principio a fin con `contact` (2 pasadas).
+    2. Si no está abierto:
+       - Limpia el buscador ('X' en (602, 259) + caja (304, 259) + Ctrl+A + Backspace).
+       - Escribe el nombre limpio del contacto.
+       - Procesa dos veces la lista de resultados ((172, 394, 514, 918)) leyendo el nombre completo de cada fila
+         para elegir 'David' o 'David ❤️' y descartar 'David 123', '@david16434', 'Juan David' o 'David Gutiérrez'.
+       - Hace clic en la fila exacta y rectifica dos veces el encabezado antes de autorizar el envío.
     """
     w = max(800, right - left)
     h = max(600, bottom - top)
     contact_formatted = contact.strip().title()
+    clean_search_query = re.sub(r"[^\w\sáéíóúÁÉÍÓÚñÑ\+\-]", "", contact_formatted).strip() or contact_formatted
 
-    if not force_search:
-        already_open, header_txt = _verify_header_fast(contact_formatted, left, top, right, bottom)
-        if already_open:
-            return True, f"El chat de '{header_txt}' ya estaba abierto y verificado en el encabezado."
-    else:
-        # Incluso si force_search=True, revisar si el encabezado ya es exactamente ese contacto (y no el anterior)
-        already_open, header_txt = _verify_header_fast(contact_formatted, left, top, right, bottom)
-        if already_open:
-            return True, f"El chat de '{header_txt}' ya está activo en el encabezado."
+    # Paso 0: Si ese contacto exacto ya está abierto en el encabezado (confirmado 2 veces), no repetir la búsqueda
+    already_open, header_txt = _verify_header_fast(clean_search_query, left, top, right, bottom, double_check=True)
+    if already_open:
+        return True, f"El chat de '{header_txt}' ya estaba abierto y fue rectificado dos veces en el encabezado."
 
     clear_btn_x = left + int(w * 0.313)  # Botón 'X' dentro de la barra de búsqueda (602, 259 en 1920x1080)
     search_x = left + int(w * 0.16)      # Campo de texto del buscador (304, 259 en 1920x1080)
     search_y = top + int(h * 0.24)
+    # Recorte de resultados excluyendo avatares (x < 172) y horas/fechas a la derecha (x > 515)
     results_box = (
-        left + int(w * 0.03),
-        top + int(h * 0.32),
-        left + int(w * 0.28),
-        top + int(h * 0.66),
+        left + int(w * 0.09),
+        top + int(h * 0.365),
+        left + int(w * 0.268),
+        top + int(h * 0.85),
     )
 
     for attempt in range(1, 3):
-        # 1. Limpiar cualquier búsqueda anterior (ej. 'david') haciendo clic en la 'X' del buscador y luego en la caja de texto
+        # 1. Limpiar de forma fluida el buscador anterior
         mouse_click(clear_btn_x, search_y, button="left", double=False)
-        time.sleep(0.1)
+        time.sleep(0.06)
         mouse_click(search_x, search_y, button="left", double=False)
-        time.sleep(0.15)
-        pyautogui.hotkey("ctrl", "a")
-        time.sleep(0.05)
-        pyautogui.press("backspace")
         time.sleep(0.08)
+        pyautogui.hotkey("ctrl", "a")
+        time.sleep(0.04)
+        pyautogui.press("backspace")
+        time.sleep(0.05)
 
-        # 2. Escribir únicamente las letras/números del nombre (sin emojis) para que el buscador de WhatsApp filtre limpio
-        clean_search_query = re.sub(r"[^\w\sáéíóúÁÉÍÓÚñÑ\+\-]", "", contact_formatted).strip() or contact_formatted
+        # 2. Escribir las letras/números del contacto para filtrar la lista
         send_text_and_keys(clean_search_query, press_enter=False)
-        time.sleep(0.85)
+        time.sleep(0.55)
 
-        # 3. Escaneo OCR de los resultados debajo de 'Chats' ((60, 350, 520, 700)) ignorando emojis y ñ/tildes
-        rows = find_matches_in_region_fast(clean_search_query, results_box)
+        # 3. Pasada 1 y Pasada 2 en la lista de resultados: leer el nombre completo de cada fila dos veces
+        rows_pass1 = find_matches_in_region_fast(clean_search_query, results_box)
+        time.sleep(0.06)
+        rows_pass2 = find_matches_in_region_fast(clean_search_query, results_box)
+        rows = rows_pass2 if rows_pass2 else rows_pass1
+
         if rows:
-            norm_q = normalize_name_for_match(clean_search_query)
-            exact_rows = [
-                r for r in rows
-                if normalize_name_for_match(r[2]) == norm_q or names_match_ignoring_emojis_and_accents(clean_search_query, r[2])
-            ]
-            chosen = exact_rows[0] if exact_rows else sorted(rows, key=lambda item: item[1])[0]
+            chosen = rows[0]
             mouse_click(chosen[0], chosen[1], button="left", double=False)
-            time.sleep(0.65)
-            ok_header, h_txt = _verify_header_fast(clean_search_query, left, top, right, bottom)
-            if ok_header or exact_rows:
-                return True, f"Cambié al chat de '{chosen[2]}' ({chosen[0]}, {chosen[1]}) y verifiqué su apertura."
-        else:
-            # Hacer clic en la primera fila de resultados bajo 'Chats' (214, 439) y rectificar el encabezado
-            first_chat_x = left + int(w * 0.115)
-            first_chat_y = top + int(h * 0.406)
-            mouse_click(first_chat_x, first_chat_y, button="left", double=False)
-            time.sleep(0.65)
-            ok_header, h_txt = _verify_header_fast(contact_formatted, left, top, right, bottom)
+            time.sleep(0.42)
+            # 4. Doble rectificación en el encabezado del chat abierto antes de mandar el mensaje
+            ok_header, h_txt = _verify_header_fast(clean_search_query, left, top, right, bottom, double_check=True)
             if ok_header:
-                return True, f"Cambié al chat de '{h_txt}' y rectifiqué el encabezado."
+                return True, f"Seleccioné '{chosen[2]}' ({chosen[0]}, {chosen[1]}) y rectifiqué dos veces en el encabezado que es '{h_txt}'."
 
-    return False, f"No se encontró '{contact_formatted}' en la lista de resultados."
+    return False, f"No se encontró un contacto cuyo nombre completo sea exactamente '{contact_formatted}'."
 
 
 def _send_message_in_open_whatsapp_chat_fast(left: int, top: int, right: int, bottom: int, message_text: str):

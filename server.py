@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Optional
 import httpx
 import psutil
 from fastapi import FastAPI, Request, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 import uvicorn
 
 from cad_engine import (
@@ -206,6 +206,16 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
 
     if any(p in low for p in ["quién eres", "quien eres", "tienes conciencia", "qué eres", "que eres"]):
         return {"reply": "Soy J.A.R.V.I.S., su asistente personal, Señor.", "tool_used": "memory"}
+
+    # Cambio de voz a solicitud del usuario
+    if any(p in low for p in ["otra voz", "cambia de voz", "cambia tu voz", "cambiar voz", "voz menos ia", "voz mas humana", "voz más humana", "voz natural"]):
+        global ACTIVE_VOICE_INDEX
+        ACTIVE_VOICE_INDEX = (ACTIVE_VOICE_INDEX + 1) % len(HUMAN_VOICES)
+        current_v = HUMAN_VOICES[ACTIVE_VOICE_INDEX]
+        return {
+            "reply": f"Listo, Señor. He cambiado mi sintetizador a la voz humana neuronal ({current_v}). ¿Qué le parece cómo sueno ahora?",
+            "tool_used": "memory",
+        }
 
     # Debate clásico: Messi vs CR7
     if "messi" in low and ("cr7" in low or "cristiano" in low or "ronaldo" in low or "mejor" in low):
@@ -686,6 +696,49 @@ async def upload_and_analyze(file: UploadFile = File(...), prompt: str = Form(""
     reply = f"Señor, he analizado su archivo '{safe_name}':\n\n{analysis_report}\n\n¿Qué desea que hagamos con él?"
     conversation_history.append({"role": "assistant", "content": reply})
     return {"reply": reply, "filename": safe_name, "tool_used": "filesystem"}
+
+
+HUMAN_VOICES = [
+    "es-CO-GonzaloNeural",     # Voz humana natural masculina (Colombia - cálida y conversacional)
+    "es-MX-JorgeNeural",       # Voz humana natural masculina (Latinoamérica - estilo cine)
+    "es-ES-AlvaroNeural",      # Voz humana natural masculina (España - estilo Jarvis película)
+    "es-VE-SebastianNeural",   # Voz humana natural masculina (Joven y fluida)
+    "es-CO-SalomeNeural",      # Voz humana natural femenina (Colombia - cálida y expresiva)
+]
+ACTIVE_VOICE_INDEX = 0
+
+
+@app.post("/api/tts")
+async def synthesize_human_speech(request: Request):
+    """
+    Genera voz neuronal hiperrealista (100% humana, cero robótica) en memoria RAM usando edge-tts.
+    """
+    body = await request.json()
+    raw_text = (body.get("text") or "").strip()
+    voice_override = (body.get("voice") or "").strip()
+    if not raw_text:
+        return Response(content=b"", media_type="audio/mpeg")
+
+    # Limpiar símbolos de markdown, rutas técnicas o emojis para que lea con fluidez humana natural
+    clean_text = re.sub(r"[*#`_~•📁📄📐⚙️📕📘📊🖼️🎬🧊⚡⏳🔐🎙️🔊🔇]", "", raw_text)
+    clean_text = re.sub(r"\(\d+,\s*\d+\)", "", clean_text)
+    clean_text = re.sub(r"\s+", " ", clean_text).strip()
+    if not clean_text:
+        return Response(content=b"", media_type="audio/mpeg")
+
+    voice_to_use = voice_override if voice_override else HUMAN_VOICES[ACTIVE_VOICE_INDEX % len(HUMAN_VOICES)]
+    try:
+        import edge_tts
+        communicate = edge_tts.Communicate(clean_text, voice=voice_to_use, rate="+4%", pitch="-1Hz")
+        audio_chunks = bytearray()
+        async for chunk in communicate.stream():
+            if chunk.get("type") == "audio":
+                audio_chunks.extend(chunk["data"])
+        if audio_chunks:
+            return Response(content=bytes(audio_chunks), media_type="audio/mpeg")
+    except Exception:
+        pass
+    return JSONResponse({"fallback": True}, status_code=206)
 
 
 @app.get("/", response_class=HTMLResponse)

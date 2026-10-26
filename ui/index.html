@@ -409,12 +409,20 @@
     <button onclick="document.getElementById('fileInput').click()" title="Subir cualquier archivo CAD, documento, imagen, audio o video">📎 ARCHIVO</button>
     <input type="text" id="userInput" placeholder="Ordene modelar una pieza en Solid Edge, adjunte un archivo o converse con Jarvis..." onkeydown="if(event.key==='Enter') sendMessage()" />
     <button onclick="sendMessage()">EJECUTAR ⚡</button>
+    <select id="voiceSelect" title="Seleccionar voz humana natural" style="background:rgba(0,229,255,0.08); color:#00e5ff; border:1px solid rgba(0,229,255,0.35); border-radius:8px; padding:8px 10px; font-size:0.78rem; cursor:pointer; outline:none;">
+      <option value="es-CO-GonzaloNeural">🎙️ Gonzalo (Humana CO)</option>
+      <option value="es-MX-JorgeNeural">🎙️ Jorge (Cine Latam)</option>
+      <option value="es-ES-AlvaroNeural">🎙️ Álvaro (Jarvis Clásico)</option>
+      <option value="es-VE-SebastianNeural">🎙️ Sebastián (Joven Natural)</option>
+      <option value="es-CO-SalomeNeural">🎙️ Salomé (Femenina Natural)</option>
+    </select>
     <button id="ttsBtn" class="active" onclick="toggleTTS()">🔊 VOZ: ON</button>
   </footer>
 
   <script>
     let ttsEnabled = true;
     let recognition = null;
+    let currentAudio = null;
 
     setInterval(() => {
       document.getElementById('clockDisplay').textContent = new Date().toLocaleTimeString('es-CO');
@@ -451,18 +459,60 @@
       label.textContent = text;
     }
 
-    function speakText(text) {
-      if (!ttsEnabled || !('speechSynthesis' in window)) return;
-      window.speechSynthesis.cancel();
-      const clean = text.replace(/[*#`_~•📁📄📐⚙️📕📘📊🖼️🎬🧊]/g, '');
-      const utter = new SpeechSynthesisUtterance(clean);
-      utter.lang = 'es-ES';
-      utter.rate = 1.08;
-      utter.pitch = 0.96;
+    async function speakText(text) {
+      if (!ttsEnabled || !text) return;
+      if (currentAudio) {
+        try {
+          currentAudio.pause();
+          currentAudio.currentTime = 0;
+        } catch (e) {}
+        currentAudio = null;
+      }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
 
-      utter.onstart = () => setReactorState('speaking', 'JARVIS INFORMANDO...');
-      utter.onend = () => setReactorState('', 'SISTEMAS EN LÍNEA');
-      window.speechSynthesis.speak(utter);
+      const selectedVoice = document.getElementById('voiceSelect')
+        ? document.getElementById('voiceSelect').value
+        : 'es-CO-GonzaloNeural';
+
+      try {
+        setReactorState('speaking', 'JARVIS INFORMANDO...');
+        const res = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text, voice: selectedVoice })
+        });
+        const ctype = res.headers.get('content-type') || '';
+        if (res.status === 200 && ctype.includes('audio')) {
+          const blob = await res.blob();
+          if (blob.size > 100) {
+            const url = URL.createObjectURL(blob);
+            currentAudio = new Audio(url);
+            currentAudio.onended = () => {
+              setReactorState('', 'SISTEMAS EN LÍNEA');
+              URL.revokeObjectURL(url);
+            };
+            currentAudio.onerror = () => setReactorState('', 'SISTEMAS EN LÍNEA');
+            await currentAudio.play();
+            return;
+          }
+        }
+      } catch (e) {}
+
+      // Respaldo offline solo si no hay red
+      if ('speechSynthesis' in window) {
+        const clean = text.replace(/[*#`_~•📁📄📐⚙️📕📘📊🖼️🎬🧊]/g, '');
+        const utter = new SpeechSynthesisUtterance(clean);
+        utter.lang = 'es-CO';
+        utter.rate = 1.04;
+        utter.pitch = 0.98;
+        utter.onstart = () => setReactorState('speaking', 'JARVIS INFORMANDO...');
+        utter.onend = () => setReactorState('', 'SISTEMAS EN LÍNEA');
+        window.speechSynthesis.speak(utter);
+      } else {
+        setReactorState('', 'SISTEMAS EN LÍNEA');
+      }
     }
 
     async function uploadFile(file) {
@@ -543,7 +593,13 @@
       const btn = document.getElementById('ttsBtn');
       btn.textContent = ttsEnabled ? '🔊 VOZ: ON' : '🔇 VOZ: OFF';
       btn.classList.toggle('active', ttsEnabled);
-      if (!ttsEnabled) window.speechSynthesis.cancel();
+      if (!ttsEnabled) {
+        if (currentAudio) {
+          try { currentAudio.pause(); } catch (e) {}
+          currentAudio = null;
+        }
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      }
     }
 
     async function resetChat() {

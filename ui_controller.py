@@ -1,4 +1,5 @@
 import ctypes
+from difflib import SequenceMatcher
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Optional, Tuple, List
 import httpx
+import numpy as np
 import pyautogui
 from PIL import ImageGrab
 
@@ -171,8 +173,9 @@ def normalize_name_for_match(text: str) -> str:
     """
     Normaliza cualquier nombre o texto eliminando:
     - Tildes y virgulilla de la ñ (Niña -> Nina, Matías -> Matias, Gutiérrez -> Gutierrez)
-    - Emojis (❤️‍🩹, ❤️, 😂, etc.) y símbolos especiales
-    para que el OCR coincida siempre por el nombre aunque tenga emojis o ñ/tildes.
+    - Emojis (❤️‍🩹, ❤️, 😂, 🔥, etc.), caracteres CJK de OCR y símbolos especiales
+    Conserva TODAS las letras y números (a-z, 0-9) para distinguir 'David' de 'David 123',
+    pero permitiendo que 'David' coincida exactamente con 'David ❤️'.
     """
     if not text:
         return ""
@@ -182,25 +185,81 @@ def normalize_name_for_match(text: str) -> str:
     return re.sub(r"\s+", " ", only_alnum).strip().lower()
 
 
-def names_match_ignoring_emojis_and_accents(target_name: str, detected_text: str) -> bool:
+_WHATSAPP_UI_LABELS = {
+    "chats", "contactos", "mensajes", "no leidos", "favoritos", "grupos",
+    "escribe un mensaje", "buscar", "ayer", "hoy", "en linea",
+}
+
+
+def exact_contact_name_match(target_name: str, detected_text: str) -> Tuple[bool, int]:
     """
-    Compara un nombre buscado (ej. 'Mi Niña Chiquita') contra el texto leído por OCR (ej. 'Mi Nina Chiquita ❤️‍🩹')
-    ignorando emojis, tildes y la ñ->n.
+    Lee y evalúa el NOMBRE COMPLETO del contacto con criterio estricto:
+    1. Si el usuario pide 'David':
+       - 'David' -> True (100)
+       - 'David ❤️' / 'David 🔥' -> True (100) (el emoji se ignora sin alterar el nombre)
+       - 'David 123' / '@david16434' -> False (0) (tiene números adicionales que cambian la identidad)
+       - 'Juan David Castañeda' / 'David Gutiérrez' -> False (0) (tiene otros nombres/apellidos)
+    2. Si el usuario pide 'David 123':
+       - 'David 123' / 'David 123 ❤️' -> True (100)
+       - 'David' -> False (0)
+    3. Si el usuario pide 'Mi Niña Chiquita':
+       - 'Mi Niña Chiquita ❤️‍🩹' -> True (100)
     """
     norm_target = normalize_name_for_match(target_name)
     norm_detected = normalize_name_for_match(detected_text)
     if not norm_target or not norm_detected:
-        return False
-    if norm_target in norm_detected:
-        return True
-    if len(norm_detected) >= 4 and norm_detected in norm_target:
-        return True
+        return False, 0
+    if norm_detected in _WHATSAPP_UI_LABELS:
+        return False, 0
 
-    target_words = [w for w in norm_target.split() if len(w) >= 2]
-    detected_words = set(norm_detected.split())
-    if target_words and all(any(tw in dw or dw in tw for dw in detected_words if len(dw) >= 2) for tw in target_words):
-        return True
-    return False
+    # Regla 1: Los números (ej. '123', '16434') deben coincidir de forma 100% exacta.
+    # Así 'David' JAMÁS coincidirá con 'David 123' ni con '@david16434'.
+    target_digits = re.findall(r"\d+", norm_target)
+    detected_digits = re.findall(r"\d+", norm_detected)
+    if target_digits != detected_digits:
+        return False, 0
+
+    # Regla 2: Coincidencia exacta de todo el nombre alfanumérico (incluye nombres con emojis ya limpiados)
+    if norm_target == norm_detected:
+        return True, 100
+
+    target_words = norm_target.split()
+    detected_words = norm_detected.split()
+
+    # Regla 3: Si el OCR leyó un emoji al final del nombre como una sola letra suelta (ej. ' ❤️' -> ' v' u ' o'),
+    # permitir esa única letra residual al final SIEMPRE que todas las palabras previas sean exactamente el nombre buscado.
+    if (
+        len(detected_words) == len(target_words) + 1
+        and len(detected_words[-1]) == 1
+        and detected_words[-1].isalpha()
+        and detected_words[:-1] == target_words
+    ):
+        return True, 90
+
+    # Regla 4: Misma cantidad exacta de palabras (rechaza 'Juan David' o 'David Gutiérrez' cuando se busca 'David'),
+    # tolerando únicamente variaciones mínimas de OCR en palabras largas (ej. 'castaneda' vs 'castanieda').
+    if len(target_words) == len(detected_words):
+        all_words_match = True
+        for tw, dw in zip(target_words, detected_words):
+            if tw == dw:
+                continue
+            if len(tw) >= 5 and len(dw) >= 5 and SequenceMatcher(None, tw, dw).ratio() >= 0.84:
+                continue
+            all_words_match = False
+            break
+        if all_words_match:
+            return True, 94
+
+    return False, 0
+
+
+def names_match_ignoring_emojis_and_accents(target_name: str, detected_text: str) -> bool:
+    """
+    Evalúa si el nombre completo detectado corresponde al contacto buscado
+    (permitiendo emojis y tildes/ñ, pero rechazando otros apellidos o números extra como 'David 123').
+    """
+    matched, _ = exact_contact_name_match(target_name, detected_text)
+    return matched
 
 
 def click_ui_element_by_uia_or_ocr(target_text: str, double_click: bool = False, right_click: bool = False) -> Optional[Tuple[int, int]]:
@@ -240,37 +299,81 @@ def click_ui_element_by_uia_or_ocr(target_text: str, double_click: bool = False,
     return find_text_on_screen_and_click(target_text, double_click=double_click, right_click=right_click)
 
 
+def scan_region_lines_fast(region_box: Tuple[int, int, int, int]) -> List[Tuple[int, int, str]]:
+    """
+    Escanea una subregión (x1, y1, x2, y2) directamente en memoria RAM (sin guardar en disco y sin clasificador de ángulo)
+    y une los fragmentos de una misma línea horizontal (abs(cy1 - cy2) <= 14) para leer SIEMPRE el nombre completo
+    de principio a fin (ej. 'David 123', 'David Gutiérrez', 'Mi Niña Chiquita').
+    """
+    lines_out: List[Tuple[int, int, str]] = []
+    x1, y1, x2, y2 = region_box
+    try:
+        img = ImageGrab.grab(bbox=(int(x1), int(y1), int(x2), int(y2)))
+        img_np = np.array(img)
+        ocr = get_ocr()
+        result, _ = ocr(img_np, use_angle_cls=False)
+        if not result:
+            return lines_out
+
+        raw_boxes = []
+        for item in result:
+            box, detected_text = item[0], (item[1] or "").strip()
+            if not detected_text:
+                continue
+            xs = [pt[0] for pt in box]
+            ys = [pt[1] for pt in box]
+            bx1, bx2 = min(xs), max(xs)
+            by1, by2 = min(ys), max(ys)
+            cy = (by1 + by2) / 2.0
+            raw_boxes.append({"bx1": bx1, "bx2": bx2, "cy": cy, "text": detected_text})
+
+        raw_boxes.sort(key=lambda b: (b["cy"], b["bx1"]))
+
+        merged_lines = []
+        for b in raw_boxes:
+            placed = False
+            for line in merged_lines:
+                if abs(line["cy"] - b["cy"]) <= 14:
+                    line["items"].append(b)
+                    line["cy"] = sum(it["cy"] for it in line["items"]) / len(line["items"])
+                    placed = True
+                    break
+            if not placed:
+                merged_lines.append({"cy": b["cy"], "items": [b]})
+
+        for line in merged_lines:
+            items = sorted(line["items"], key=lambda it: it["bx1"])
+            full_text = " ".join(it["text"] for it in items).strip()
+            min_x = items[0]["bx1"]
+            max_x = items[-1]["bx2"]
+            cx = int(x1 + (min_x + max_x) / 2.0)
+            cy = int(y1 + line["cy"])
+            lines_out.append((cx, cy, full_text))
+    except Exception:
+        pass
+    return lines_out
+
+
 def find_matches_in_region_fast(
     target_text: str, region_box: Tuple[int, int, int, int]
 ) -> List[Tuple[int, int, str]]:
     """
-    Escaneo OCR ultrarrápido recortando ÚNICAMENTE la subregión necesaria (x1, y1, x2, y2).
-    Compara los nombres ignorando emojis, tildes y ñ->n.
+    Escaneo OCR ultrarrápido en RAM sobre la subregión (x1, y1, x2, y2).
+    Lee el nombre completo de cada fila y verifica con `exact_contact_name_match` que coincida
+    exactamente con el contacto pedido (aceptando emojis, pero rechazando 'David 123' o apellidos extra si se pidió 'David').
     """
-    matches: List[Tuple[int, int, str]] = []
     if not normalize_name_for_match(target_text):
-        return matches
+        return []
 
-    x1, y1, x2, y2 = region_box
-    try:
-        crop_path = Path("C:/Jarvis/logs/region_crop.png")
-        crop_path.parent.mkdir(parents=True, exist_ok=True)
-        img = ImageGrab.grab(bbox=(int(x1), int(y1), int(x2), int(y2)))
-        img.save(str(crop_path))
-        ocr = get_ocr()
-        result, _ = ocr(str(crop_path))
-        if result:
-            for item in result:
-                box, detected_text, _ = item[0], item[1], item[2]
-                if names_match_ignoring_emojis_and_accents(target_text, detected_text):
-                    xs = [pt[0] for pt in box]
-                    ys = [pt[1] for pt in box]
-                    cx = int(x1 + sum(xs) / 4.0)
-                    cy = int(y1 + sum(ys) / 4.0)
-                    matches.append((cx, cy, detected_text))
-    except Exception:
-        pass
-    return matches
+    all_lines = scan_region_lines_fast(region_box)
+    scored_matches: List[Tuple[int, int, int, str]] = []
+    for cx, cy, full_text in all_lines:
+        matched, score = exact_contact_name_match(target_text, full_text)
+        if matched:
+            scored_matches.append((score, cy, cx, full_text))
+
+    scored_matches.sort(key=lambda item: (-item[0], item[1]))
+    return [(cx, cy, full_text) for score, cy, cx, full_text in scored_matches]
 
 
 def find_all_matches_uia_and_ocr(target_text: str, window_keyword: str = "") -> List[Tuple[int, int, str]]:
