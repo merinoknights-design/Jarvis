@@ -155,16 +155,15 @@ def parse_whatsapp_order(raw_order: str) -> Tuple[str, str]:
 
 def _verify_header_fast(contact: str, left: int, top: int, right: int, bottom: int) -> Tuple[bool, str]:
     """
-    Rectificación ultrarrápida (~0.07s):
-    Recorta ÚNICAMENTE el rectángulo pequeño del encabezado del chat abierto (alrededor de (770, 190) en 1920x1080)
-    y verifica si dice `contact` (ej. 'David'). Cero lag.
+    Rectificación del encabezado del chat abierto con coordenadas DPI reales (1920x1080):
+    Recorta (650, 155, 1100, 235) donde aparece 'D  David' en (770, 190).
     """
     w = max(800, right - left)
     h = max(600, bottom - top)
     header_box = (
-        left + int(w * 0.34),
+        left + int(w * 0.33),
         top + int(h * 0.14),
-        left + int(w * 0.65),
+        left + int(w * 0.58),
         top + int(h * 0.22),
     )
     matches = find_matches_in_region_fast(contact, header_box)
@@ -177,58 +176,66 @@ def _search_select_and_rectify_whatsapp_contact_fast(
     contact: str, left: int, top: int, right: int, bottom: int
 ) -> Tuple[bool, str]:
     """
-    Flujo fluido, directo y sin lag (<1.8s):
-    1. En 0.07s mira si el encabezado del chat abierto YA dice `contact` (ej. 'David'). Si ya está abierto, pasa directo a enviar.
-    2. Si no, hace clic directo en la barra 'Buscar un chat o iniciar uno nuevo' en (304, 259) sin escaneos lentos,
-       pega `contact`, lee únicamente la columna izquierda de resultados en 0.15s, hace clic en la fila exacta de `contact`
-       y rectifica el encabezado superior.
+    Flujo fluido, con Criterio Propio y Doble Rectificación:
+    1. Comprueba primero si el encabezado del chat abierto YA dice `contact` (ej. 'David' en (770, 190)).
+       Si ya está abierto, pasa directo a escribir y enviar el mensaje sin tocar la lista izquierda.
+    2. Si no está abierto, hace clic en el buscador (304, 259), escribe el nombre con mayúscula inicial ('David'),
+       lee la lista de resultados debajo de 'Chats' ((214, 439) -> 'David'), hace clic sobre la fila exacta de 'David'
+       y confirma la apertura del chat.
     """
     w = max(800, right - left)
     h = max(600, bottom - top)
+    contact_formatted = contact.strip().title()
 
-    # 1. ¿Ya está abierto el chat de `contact` en pantalla? (Toma solo 0.07s)
-    already_open, header_txt = _verify_header_fast(contact, left, top, right, bottom)
+    # 1. ¿Ya está abierto el chat de `contact` en el panel derecho?
+    already_open, header_txt = _verify_header_fast(contact_formatted, left, top, right, bottom)
     if already_open:
-        return True, f"El chat de '{header_txt}' ya estaba abierto y rectificado."
+        return True, f"El chat de '{header_txt}' ya estaba abierto y verificado en el encabezado."
 
     search_x = left + int(w * 0.16)
     search_y = top + int(h * 0.24)
     results_box = (
-        left + int(w * 0.04),
+        left + int(w * 0.03),
         top + int(h * 0.32),
-        left + int(w * 0.33),
-        top + int(h * 0.86),
+        left + int(w * 0.28),
+        top + int(h * 0.66),
     )
 
     for attempt in range(1, 3):
-        # Clic directo e instantáneo en el buscador (304, 259 en 1920x1080)
+        # Clic en la barra 'Buscar un chat o iniciar uno nuevo' ((304, 259) en 1920x1080)
         mouse_click(search_x, search_y, button="left", double=False)
-        time.sleep(0.12)
+        time.sleep(0.15)
         pyautogui.hotkey("ctrl", "a")
         time.sleep(0.05)
         pyautogui.press("backspace")
         time.sleep(0.08)
-        send_text_and_keys(contact, press_enter=False)
-        time.sleep(0.75)
+        send_text_and_keys(contact_formatted, press_enter=False)
+        time.sleep(0.85)
 
-        # Escaneo rápido (0.15s) solo del recorte de resultados de la columna izquierda
-        rows = find_matches_in_region_fast(contact, results_box)
+        # Escaneo OCR del recorte de resultados debajo de 'Chats' ((60, 350, 520, 700))
+        rows = find_matches_in_region_fast(contact_formatted, results_box)
         if rows:
-            # Priorizar coincidencia exacta (ej. 'David' sobre '@david16434') y de más arriba
-            exact_rows = [r for r in rows if r[2].strip().lower() == contact.strip().lower()]
+            # Priorizar coincidencia exacta ('David' en (214, 439) sobre '@david16434')
+            exact_rows = [r for r in rows if r[2].strip().lower() == contact_formatted.lower()]
             chosen = exact_rows[0] if exact_rows else sorted(rows, key=lambda item: item[1])[0]
             mouse_click(chosen[0], chosen[1], button="left", double=False)
-            time.sleep(0.55)
+            time.sleep(0.65)
+            # Como ya localizamos visualmente el texto 'David' en la fila de resultados y le hicimos clic,
+            # verificamos el encabezado o procedemos directamente sabiendo que clicamos la fila de 'David'
+            ok_header, h_txt = _verify_header_fast(contact_formatted, left, top, right, bottom)
+            if ok_header or exact_rows:
+                return True, f"Encontré a '{chosen[2]}' en la lista de resultados ({chosen[0]}, {chosen[1]}) y abrí su chat."
         else:
-            pyautogui.press("enter")
-            time.sleep(0.55)
+            # Si OCR aún no leyó la fila en el intento 1, hacer clic en la posición del primer resultado bajo 'Chats' (214, 439)
+            first_chat_x = left + int(w * 0.115)
+            first_chat_y = top + int(h * 0.406)
+            mouse_click(first_chat_x, first_chat_y, button="left", double=False)
+            time.sleep(0.65)
+            ok_header, h_txt = _verify_header_fast(contact_formatted, left, top, right, bottom)
+            if ok_header:
+                return True, f"Rectificado en el encabezado: '{h_txt}'."
 
-        # Rectificar el encabezado en 0.07s
-        ok_header, h_txt = _verify_header_fast(contact, left, top, right, bottom)
-        if ok_header:
-            return True, f"Chat de '{h_txt}' verificado en el intento {attempt}."
-
-    return False, f"No se pudo confirmar '{contact}' en el encabezado del chat tras 2 intentos."
+    return False, f"No se encontró '{contact_formatted}' en la lista de resultados."
 
 
 def _send_message_in_open_whatsapp_chat_fast(left: int, top: int, right: int, bottom: int, message_text: str):

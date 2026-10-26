@@ -13,6 +13,17 @@ import pyautogui
 from PIL import ImageGrab
 
 pyautogui.FAILSAFE = False
+pyautogui.PAUSE = 0.02
+
+# Activar DPI Awareness real (1920x1080) en Windows con escalado 125%/150% para que ImageGrab y los clics coincidan al 100%
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
 user32 = ctypes.windll.user32
 
 MOUSEEVENTF_LEFTDOWN = 0x0002
@@ -146,9 +157,7 @@ def focus_and_maximize_chrome_window(title_keyword: str = "") -> Optional[Tuple[
                     user32.SetForegroundWindow(target_win.handle)
                 except Exception:
                     pass
-            time.sleep(0.3)
-            r = target_win.rectangle()
-            return (int(r.left), int(r.top), int(r.right), int(r.bottom))
+            time.sleep(0.25)
     except Exception:
         pass
 

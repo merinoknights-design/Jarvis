@@ -287,17 +287,20 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             return {"reply": "Modelando la pieza en Modo Ordenado en Solid Edge 2026, Señor.", "tool_used": "filesystem"}
 
     # 5.9 CONCIENCIA DE ESTADO, RAZONAMIENTO DE ERRORES Y AUTODIAGNÓSTICO PROPIO
-    # Si el usuario pregunta por qué falló algo, "no veo el mensaje", "no lo mandó", "lo mandó a otro chat", "no se lo mandó a David",
-    # Jarvis analiza lo que ocurrió realmente en su última acción y corrige el envío en lugar de buscar en internet.
+    # Si el usuario dice "otra vez no lo veo", "no veo el mensaje", "no lo encuentra", "rectifícalo bien", "lo mandó a otro chat",
+    # Jarvis analiza su memoria real de la última acción y corrige el envío en lugar de buscar canciones o cosas en internet.
     error_or_missing_phrases = [
-        "no veo el mensaje", "no mando el mensaje", "no mandó el mensaje", "no lo mando", "no lo mandó",
-        "no lo mandaste", "no se envio", "no se envió", "sigue sin mandar", "no escribio", "no escribió",
-        "no hiciste nada", "no hizo nada", "no lo hizo", "que paso con el error", "qué pasó con el error",
-        "cual fue el error", "cuál fue el error", "por que no mando", "por qué no mandó",
-        "por que no lo mando", "por qué no lo mandó", "por que fallo", "por qué falló",
-        "no salio el mensaje", "no salió el mensaje", "no aparece el mensaje", "no envió nada", "no envio nada",
-        "lo mando a otro chat", "lo mandó a otro chat", "lo mando al primer chat", "lo mandó al primer chat",
+        "no lo veo", "otra vez no lo veo", "no veo el mensaje", "no mando el mensaje", "no mandó el mensaje",
+        "no lo mando", "no lo mandó", "no lo mandaste", "no se envio", "no se envió", "sigue sin mandar",
+        "no escribio", "no escribió", "no hiciste nada", "no hizo nada", "no lo hizo", "no lo hace",
+        "que paso con el error", "qué pasó con el error", "cual fue el error", "cuál fue el error",
+        "por que no mando", "por qué no mandó", "por que no lo mando", "por qué no lo mandó",
+        "por que fallo", "por qué falló", "no salio el mensaje", "no salió el mensaje",
+        "no aparece el mensaje", "no envió nada", "no envio nada", "lo mando a otro chat",
+        "lo mandó a otro chat", "lo mando al primer chat", "lo mandó al primer chat",
         "no se lo mando a", "no se lo mandó a", "ese no era el chat", "mandaselo a", "mándaselo a",
+        "no lo encuentra", "dice que no lo encuentra", "no lo encontro", "no lo encontró",
+        "rectificalo", "rectifícalo", "miralo bien", "míralo bien",
     ]
     if any(p in low for p in error_or_missing_phrases):
         execute_smart_task(
@@ -308,7 +311,7 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             notify_on_complete=True,
         )
         return {
-            "reply": "Revisando el chat en pantalla y rectificando el contacto antes de reenviar el mensaje, Señor...",
+            "reply": "Entendido, Señor. Revisando mi memoria de la conversación y rectificando el chat de David en pantalla ahora mismo.",
             "tool_used": "memory",
         }
 
@@ -756,16 +759,48 @@ async def chat(request: Request):
         conversation_history.append({"role": "assistant", "content": instant["reply"]})
         return instant
 
-    # 2. SI OLLAMA ESTÁ CORRIENDO LOCALMENTE, USARLO CON CONTEXTO DE BRAVE SI ES NECESARIO
+    # 2. CRITERIO PROPIO DE MEMORIA DE CONVERSACIÓN VS BÚSQUEDA WEB
+    # Solo buscar en internet si el usuario activó el botón WEB o si hace una pregunta real de información externa,
+    # NUNCA cuando está hablando con Jarvis sobre la conversación actual, tareas, errores o su pantalla.
+    conversational_self_words = [
+        "necesito que", "criterio", "memoria", "estamos preguntando", "hablando", "conversación", "conversacion",
+        "no lo veo", "otra vez", "todavía", "todavia", "david", "whatsapp", "mensaje", "chat", "rectifica",
+        "me mandas a", "me manda a", "canción", "cancion", "hiciste", "haces", "dijiste", "dijo",
+    ]
+    should_query_web = use_search or (
+        not any(cw in low_msg for cw in conversational_self_words)
+        and any(
+            q in low_msg
+            for q in [
+                "qué es", "que es", "quién es", "quien es", "cuándo", "cuando", "dónde", "donde",
+                "cuánto", "cuanto", "noticias", "clima", "historia de", "busca en internet", "investiga",
+            ]
+        )
+    )
+
     model_online = await detect_best_model()
-    web_items = await brave_search_detailed(user_msg)
+    web_items = await brave_search_detailed(user_msg) if should_query_web else []
     web_context = "\n".join([f"- {i['title']}: {i['description']}" for i in web_items[:3]])
+
+    action_memory_note = (
+        f"\n[Memoria interna de tu última acción en el PC: app={LAST_ACTION_STATE.get('active_app')}, "
+        f"contacto={LAST_ACTION_STATE.get('last_target_contact')}, "
+        f"mensaje='{LAST_ACTION_STATE.get('last_message_text')}', "
+        f"estado={LAST_ACTION_STATE.get('last_status')}, "
+        f"detalle={LAST_ACTION_STATE.get('last_detail')}]"
+        if LAST_ACTION_STATE.get("active_app")
+        else ""
+    )
 
     if model_online:
         try:
-            prompt_enriched = user_msg + (f"\n\n[Datos de apoyo en tiempo real]:\n{web_context}" if web_context else "")
+            prompt_enriched = (
+                user_msg
+                + action_memory_note
+                + (f"\n\n[Datos de apoyo en tiempo real]:\n{web_context}" if web_context else "")
+            )
             conversation_history.append({"role": "user", "content": prompt_enriched})
-            messages_to_send = [conversation_history[0]] + conversation_history[-6:]
+            messages_to_send = [conversation_history[0]] + conversation_history[-8:]
             async with httpx.AsyncClient(timeout=12.0) as client:
                 resp = await client.post(
                     f"{OLLAMA_URL}/api/chat",
@@ -774,7 +809,7 @@ async def chat(request: Request):
                         "messages": messages_to_send,
                         "stream": False,
                         "keep_alive": -1,
-                        "options": {"num_predict": 140, "temperature": 0.7}
+                        "options": {"num_predict": 140, "temperature": 0.6}
                     }
                 )
                 if resp.status_code == 200:
@@ -785,7 +820,6 @@ async def chat(request: Request):
         except Exception:
             pass
 
-    # 3. RESPUESTA INTELIGENTE CON SÍNTESIS DE BRAVE SEARCH MCP (<0.4s) PARA CUALQUIER OTRO PC SIN OLLAMA
     if web_items:
         top = web_items[0]
         extra = f" Además, {web_items[1]['description']}" if len(web_items) > 1 else ""
@@ -793,8 +827,18 @@ async def chat(request: Request):
         conversation_history.append({"role": "assistant", "content": reply})
         return {"reply": reply, "tool_used": "brave-search"}
 
+    if LAST_ACTION_STATE.get("active_app"):
+        reply = (
+            f"Señor, mantengo en memoria que estamos trabajando en {LAST_ACTION_STATE.get('active_app').upper()} "
+            f"(Contacto activo: '{LAST_ACTION_STATE.get('last_target_contact') or 'ninguno'}', "
+            f"Último mensaje: '{LAST_ACTION_STATE.get('last_message_text') or 'ninguno'}'). "
+            f"Dígame qué ajuste o mensaje desea que envíe a continuación."
+        )
+        conversation_history.append({"role": "assistant", "content": reply})
+        return {"reply": reply, "tool_used": "memory"}
+
     return {
-        "reply": f"Lo escucho perfectamente, Señor. Sobre '{user_msg}', estoy a su entera disposición para conversar, buscar datos en tiempo real o ejecutar cualquier programa en su ordenador.",
+        "reply": f"Lo escucho perfectamente y mantengo el hilo de nuestra conversación, Señor. Dígame cómo desea continuar.",
         "tool_used": "memory"
     }
 
