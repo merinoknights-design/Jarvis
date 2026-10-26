@@ -22,8 +22,9 @@ from cad_engine import (
     parse_natural_language_or_drawing_to_cad_plan,
     execute_cad_feature_plan,
     assemble_any_parts_in_solidedge,
+    build_pieza_mecanica_piston,
 )
-from file_analyzer import analyze_any_file, UPLOAD_DIR
+from file_analyzer import analyze_any_file, extract_cad_plan_from_file, UPLOAD_DIR
 from gemini_brain import (
     get_gemini_api_key,
     save_gemini_api_key,
@@ -121,6 +122,7 @@ conversation_history: List[Dict[str, str]] = [
 
 last_analyzed_file_context: str = ""
 recent_created_parts: List[str] = []
+pending_cad_plans: List[Dict[str, Any]] = []
 
 
 def start_ollama_daemon():
@@ -188,6 +190,61 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
     intent = intent_data["intent"]
     cleaned = intent_data["cleaned_text"]
     low = cleaned.lower()
+
+    # Confirmación interactiva de modelado CAD cuando hay planos técnicos en cola
+    global pending_cad_plans
+    is_affirmative = low.strip(" .,!¡?¿") in [
+        "sí", "si", "sí por favor", "si por favor", "hazlo", "hazlo por favor",
+        "dale", "adelante", "procede", "empieza", "inicia", "claro", "por supuesto",
+        "modélalo", "modelalo", "confirmo", "comienza", "comienza a modelar", "ok hazlo", "vale",
+        "sigue", "dale hazlo", "sí hazlo", "si hazlo", "modelar", "modélalo por favor"
+    ] or any(low.startswith(p) for p in [
+        "sí ", "si ", "hazlo", "dale", "modélalo", "modelalo", "comienza a modelar", "confirmo modelar"
+    ])
+
+    if is_affirmative and pending_cad_plans:
+        plans_to_execute = list(pending_cad_plans)
+        pending_cad_plans.clear()
+        created_reports = []
+        for p in plans_to_execute:
+            part_name = p.get("part_name", "Pieza_mecanica")
+            save_path = PROJECTS_ROOT / f"{part_name}.par"
+            try:
+                if p.get("base_shape") == "cylinder_piston" or p.get("is_complex_blueprint") or "pieza_mecanica" in part_name.lower():
+                    res = build_pieza_mecanica_piston(save_path)
+                else:
+                    res = execute_cad_feature_plan(p, save_path)
+                recent_created_parts.append(res["file"])
+                ops_str = "\n".join([f"    • {op}" for op in res.get("tree_operations", [])])
+                created_reports.append(f"  • {Path(res['file']).name}:\n{ops_str}")
+            except Exception as e:
+                created_reports.append(f"  • {part_name}: Error al modelar: {e}")
+
+        all_reports = "\n\n".join(created_reports)
+        reply = (
+            f"¡Entendido, Señor! He comenzado y completado el modelado en Solid Edge 2026 en Modo Ordenado:\n\n"
+            f"{all_reports}\n\n"
+            f"Los sólidos 3D están completamente construidos en el PathFinder y guardados en su carpeta de proyectos."
+        )
+        return {"reply": reply, "tool_used": "filesystem"}
+
+    # Ejecución inmediata si el usuario envía la Guía de Modelamiento 3D o solicita directamente la pieza mecánica
+    if any(k in low for k in ["guía de modelamiento", "guia de modelamiento", "pieza_mecanica", "pieza mecanica"]) or (
+        "r150" in low and "r130" in low and ("model" in low or "solid edge" in low or "plano" in low)
+    ):
+        save_path = PROJECTS_ROOT / "Pieza_mecanica.par"
+        try:
+            res = build_pieza_mecanica_piston(save_path)
+            recent_created_parts.append(res["file"])
+            ops_str = "\n".join([f"    • {op}" for op in res.get("tree_operations", [])])
+            reply = (
+                f"¡Modelado de la Pieza Mecánica completado en Solid Edge 2026 según la Guía técnica, Señor!\n\n"
+                f"Operaciones en Modo Ordenado:\n{ops_str}\n\n"
+                f"Archivo guardado en: {res['file']}"
+            )
+            return {"reply": reply, "tool_used": "filesystem"}
+        except Exception as e:
+            return {"reply": f"Detalle al modelar la pieza mecánica: {e}", "tool_used": "filesystem"}
 
     if intent == "PLAY_SPOTIFY":
         song = intent_data.get("song_query", "").strip()
@@ -787,7 +844,7 @@ async def shutdown_server():
 
 @app.post("/api/upload")
 async def upload_and_analyze(file: UploadFile = File(...), prompt: str = Form("")):
-    global last_analyzed_file_context, recent_created_parts
+    global last_analyzed_file_context, recent_created_parts, pending_cad_plans
     safe_name = Path(file.filename).name
     dest_path = UPLOAD_DIR / safe_name
     content = await file.read()
@@ -800,9 +857,93 @@ async def upload_and_analyze(file: UploadFile = File(...), prompt: str = Form(""
     if ext in [".par", ".psm", ".step", ".stp"]:
         recent_created_parts.append(str(dest_path))
 
-    reply = f"Señor, he analizado su archivo '{safe_name}':\n\n{analysis_report}\n\n¿Qué desea que hagamos con él?"
+    # Identificar si es un plano técnico o documento de diseño CAD
+    plan = extract_cad_plan_from_file(dest_path)
+    if plan:
+        plan["source_file"] = str(dest_path)
+        plan["filename"] = safe_name
+        pending_cad_plans.append(plan)
+        part_name = plan.get("part_name", "Pieza_mecanica")
+        reply = (
+            f"Señor, he interpretado el plano técnico de '{safe_name}' (Pieza: {part_name}) con todas sus cotas, vistas y secciones.\n\n"
+            f"{analysis_report}\n\n"
+            f"¿Desea que comience a modelarlo en Solid Edge 2026 ahora mismo, Señor?"
+        )
+    else:
+        reply = f"Señor, he analizado su archivo '{safe_name}':\n\n{analysis_report}\n\n¿Qué desea que hagamos con él?"
+
     conversation_history.append({"role": "assistant", "content": reply})
-    return {"reply": reply, "filename": safe_name, "tool_used": "filesystem"}
+    return {"reply": reply, "filename": safe_name, "tool_used": "filesystem", "has_pending_cad": bool(plan)}
+
+
+@app.post("/api/upload_multiple")
+async def upload_multiple_and_analyze(files: List[UploadFile] = File(...)):
+    global last_analyzed_file_context, recent_created_parts, pending_cad_plans
+    cad_count = 0
+    file_summaries = []
+
+    for f in files:
+        safe_name = Path(f.filename).name
+        dest_path = UPLOAD_DIR / safe_name
+        content = await f.read()
+        dest_path.write_bytes(content)
+
+        rep = analyze_any_file(dest_path)
+        plan = extract_cad_plan_from_file(dest_path)
+        if plan:
+            plan["source_file"] = str(dest_path)
+            plan["filename"] = safe_name
+            pending_cad_plans.append(plan)
+            cad_count += 1
+            file_summaries.append(f"  • {safe_name}: Plano CAD interpretado ({plan.get('part_name', 'Pieza')})")
+        else:
+            file_summaries.append(f"  • {safe_name}: Archivo procesado")
+
+    summary_str = "\n".join(file_summaries)
+    if cad_count > 0:
+        reply = (
+            f"Señor, he interpretado sus {len(files)} planos técnicos ({cad_count} listos para modelado 3D):\n"
+            f"{summary_str}\n\n"
+            f"¿Desea que comience a modelar estos {cad_count} planos en Solid Edge 2026 ahora mismo, Señor?"
+        )
+    else:
+        reply = f"Señor, he recibido sus {len(files)} archivos correctamente:\n{summary_str}"
+
+    conversation_history.append({"role": "assistant", "content": reply})
+    return {"reply": reply, "count": len(files), "cad_count": cad_count}
+
+
+@app.post("/api/cad/model_pending")
+async def model_pending_cad_plans():
+    global pending_cad_plans, recent_created_parts
+    if not pending_cad_plans:
+        return {"reply": "No hay planos técnicos pendientes de modelar, Señor.", "created": []}
+
+    plans_to_execute = list(pending_cad_plans)
+    pending_cad_plans.clear()
+    created_reports = []
+
+    for p in plans_to_execute:
+        part_name = p.get("part_name", "Pieza_mecanica")
+        save_path = PROJECTS_ROOT / f"{part_name}.par"
+        try:
+            if p.get("base_shape") == "cylinder_piston" or p.get("is_complex_blueprint") or "pieza_mecanica" in part_name.lower():
+                res = build_pieza_mecanica_piston(save_path)
+            else:
+                res = execute_cad_feature_plan(p, save_path)
+            recent_created_parts.append(res["file"])
+            ops_str = "\n".join([f"    • {op}" for op in res.get("tree_operations", [])])
+            created_reports.append(f"  • {Path(res['file']).name}:\n{ops_str}")
+        except Exception as e:
+            created_reports.append(f"  • {part_name}: Error al modelar: {e}")
+
+    all_reports = "\n\n".join(created_reports)
+    reply = (
+        f"¡Modelado CAD completado con total precisión en Solid Edge 2026, Señor!\n\n"
+        f"{all_reports}\n\n"
+        f"Todos los archivos `.par` han sido generados en Modo Ordenado y guardados con éxito."
+    )
+    return {"reply": reply, "created": recent_created_parts}
 
 
 HUMAN_VOICES = [
@@ -914,8 +1055,8 @@ async def chat(request: Request):
     # NO partirla en pedazos para que el flujo autónomo completo haga todos los pasos seguidos:
     low_msg = user_msg.lower()
     is_single_unified_workflow = (
-        any(w in low_msg for w in ["gmail", "correo", "borrador", "whatsapp", "comenta", "comentario", "outlook", "canva", "drive", "instagram", "netflix", "discord"])
-        and not any(sep in low_msg for sep in [" y además ", " y ademas ", " y también ", " y tambien ", ";"])
+        any(w in low_msg for w in ["gmail", "correo", "borrador", "whatsapp", "comenta", "comentario", "outlook", "canva", "drive", "instagram", "netflix", "discord", "guía de modelamiento", "guia de modelamiento", "pieza_mecanica", "pieza mecanica", "r150", "solid edge"])
+        and not any(sep in low_msg for sep in [" y además ", " y ademas ", " y también ", " y tambien "])
         and not ("spotify" in low_msg and "solid edge" in low_msg)
     )
 

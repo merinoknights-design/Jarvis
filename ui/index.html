@@ -401,9 +401,9 @@
     </div>
 
     <div class="drop-banner" onclick="document.getElementById('fileInput').click()">
-      📥 Arrastra aquí o haz clic para insertar archivos: <b>.STEP, .PAR, .ASM, .PDF, .DOCX, .XLSX, .JPG, .PNG, .MP3, .MP4</b>
+      📥 Arrastra aquí o haz clic para insertar múltiples planos y archivos: <b>.PNG, .JPG, .PDF, .STEP, .PAR, .ASM, .DOCX, .XLSX</b>
     </div>
-    <input type="file" id="fileInput" style="display:none" onchange="uploadFile(this.files[0])" />
+    <input type="file" id="fileInput" style="display:none" multiple onchange="uploadFiles(this.files)" />
   </main>
 
   <section class="panel">
@@ -529,34 +529,58 @@
       }
     }
 
-    async function uploadFile(file) {
-      if (!file) return;
-      appendMsg('user', `📎 Archivo adjuntado: ${file.name} (${Math.round(file.size/1024)} KB)`);
-      setReactorState('speaking', `ANALIZANDO ARCHIVO ${file.name.toUpperCase()}...`);
+    async function uploadFiles(fileList) {
+      if (!fileList || fileList.length === 0) return;
 
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('prompt', document.getElementById('userInput').value || '');
+      if (fileList.length === 1) {
+        const file = fileList[0];
+        appendMsg('user', `📎 Plano/Archivo adjuntado: ${file.name} (${Math.round(file.size/1024)} KB)`);
+        setReactorState('speaking', `ANALIZANDO PLANO TÉCNICO ${file.name.toUpperCase()}...`);
 
-      try {
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData
-        });
-        const data = await res.json();
-        appendMsg('jarvis', data.reply);
-        setReactorState('', 'ANÁLISIS COMPLETADO');
-        speakText(`Señor, he completado el análisis de su archivo ${file.name}.`);
-      } catch (e) {
-        appendMsg('jarvis', 'Ocurrió un error al analizar el archivo.');
-        setReactorState('', 'ERROR EN ANÁLISIS');
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('prompt', document.getElementById('userInput').value || '');
+
+        try {
+          const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          const data = await res.json();
+          appendMsg('jarvis', data.reply);
+          setReactorState('', 'PLANO INTERPRETADO');
+          speakText(`Señor, he interpretado su plano técnico ${file.name}.`);
+        } catch (e) {
+          appendMsg('jarvis', 'Ocurrió un error al analizar el plano.');
+          setReactorState('', 'ERROR EN ANÁLISIS');
+        }
+      } else {
+        appendMsg('user', `📎 ${fileList.length} planos/archivos adjuntados simultáneamente.`);
+        setReactorState('speaking', `INTERPRETANDO ${fileList.length} PLANOS CAD EN PARALELO...`);
+
+        const formData = new FormData();
+        for (let i = 0; i < fileList.length; i++) {
+          formData.append('files', fileList[i]);
+        }
+
+        try {
+          const res = await fetch('/api/upload_multiple', { method: 'POST', body: formData });
+          const data = await res.json();
+          appendMsg('jarvis', data.reply);
+          setReactorState('', `${fileList.length} PLANOS LISTOS`);
+          speakText(`Señor, he interpretado con éxito sus ${fileList.length} planos técnicos.`);
+        } catch (e) {
+          appendMsg('jarvis', 'Ocurrió un error al procesar el lote de planos.');
+          setReactorState('', 'ERROR EN LOTE');
+        }
       }
+    }
+
+    async function uploadFile(file) {
+      if (file) uploadFiles([file]);
     }
 
     function handleDrop(event) {
       event.preventDefault();
       if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
-        uploadFile(event.dataTransfer.files[0]);
+        uploadFiles(event.dataTransfer.files);
       }
     }
 

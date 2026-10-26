@@ -1,11 +1,121 @@
+import base64
 import json
 import os
 import re
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
+import httpx
 
 UPLOAD_DIR = Path("C:/Jarvis/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def analyze_blueprint_with_gemini(file_path: Path) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """
+    Analiza un plano técnico o esquema mecánico usando la visión multimodal de Google Gemini.
+    Extrae cotas, vistas, cortes, radios y genera el plan de operaciones para Solid Edge.
+    """
+    try:
+        from gemini_brain import get_gemini_api_key
+        api_key = get_gemini_api_key()
+    except Exception:
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+
+    if not api_key:
+        return "", None
+
+    ext = file_path.suffix.lower()
+    mime_type = "application/pdf" if ext == ".pdf" else "image/png"
+    if ext in [".jpg", ".jpeg"]:
+        mime_type = "image/jpeg"
+    elif ext == ".webp":
+        mime_type = "image/webp"
+
+    try:
+        raw_bytes = file_path.read_bytes()
+        b64_data = base64.b64encode(raw_bytes).decode("utf-8")
+    except Exception:
+        return "", None
+
+    prompt = (
+        "Eres un ingeniero mecánico y experto en diseño CAD en Siemens Solid Edge 2026. "
+        "Analiza minuciosamente este plano técnico / dibujo de ingeniería. "
+        "Identifica todas las vistas (Frontal, Superior, Lateral, Isométrica), secciones o cortes (Corte A-A, Corte C-C, etc.), "
+        "detalles escalonados (Detalle B) y todas las cotas numéricas (radios R, diámetros Ø, alturas, anchuras, ranuras, espesores, chaflanes y tolerancias). "
+        "Genera un reporte técnico claro en español y devuelve un objeto JSON estructurado al final delimitado con ```json ... ``` "
+        "con los campos:\n"
+        "{\n"
+        '  "part_name": "Nombre_de_la_pieza",\n'
+        '  "base_shape": "cylinder_piston" o "cylinder" o "box" o "flange",\n'
+        '  "is_complex_blueprint": true,\n'
+        '  "dimensions_mm": {\n'
+        '    "outer_radius": 150,\n'
+        '    "inner_radius": 130,\n'
+        '    "total_height": 180,\n'
+        '    "inner_height": 140,\n'
+        '    "central_opening_width": 100,\n'
+        '    "support_width": 40,\n'
+        '    "pin_radius": 25,\n'
+        '    "outer_pin_radius": 45,\n'
+        '    "transition_radius": 100,\n'
+        '    "round_r5": 5,\n'
+        '    "round_r15": 15,\n'
+        '    "chamfer": "5x45",\n'
+        '    "ring_grooves_depth": 7.5,\n'
+        '    "ring_grooves_width": 5.0\n'
+        "  },\n"
+        '  "ordered_operations": [\n'
+        '    "1. Boceto 2D y Protrusión del cuerpo principal",\n'
+        '    "2. Vaciado de ranuras superiores", ...\n'
+        "  ],\n"
+        '  "summary_es": "Descripción de cotas y geometría interpretada"\n'
+        "}"
+    )
+
+    models_to_try = [
+        "gemini-3.5-flash",
+        "gemini-3.8-flash",
+    ]
+
+    for model in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": mime_type, "data": b64_data}}
+                ]
+            }],
+            "generationConfig": {"temperature": 0.15, "maxOutputTokens": 1200}
+        }
+        try:
+            with httpx.Client(timeout=8.0) as client:
+                resp = client.post(url, json=payload)
+                if resp.status_code == 200:
+                    cand = resp.json().get("candidates", [])
+                    if cand:
+                        text_resp = cand[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                        if text_resp:
+                            # Extraer JSON de la respuesta
+                            plan_dict = None
+                            json_match = re.search(r"```json\s*(\{.*?\})\s*```", text_resp, re.DOTALL)
+                            if json_match:
+                                try:
+                                    plan_dict = json.loads(json_match.group(1))
+                                except Exception:
+                                    pass
+                            elif "{" in text_resp and "}" in text_resp:
+                                try:
+                                    s_idx = text_resp.find("{")
+                                    e_idx = text_resp.rfind("}") + 1
+                                    plan_dict = json.loads(text_resp[s_idx:e_idx])
+                                except Exception:
+                                    pass
+                            return text_resp, plan_dict
+        except Exception:
+            continue
+
+    return "", None
 
 
 def analyze_step_file(file_path: Path) -> str:
@@ -108,12 +218,76 @@ def analyze_excel(file_path: Path) -> str:
     )
 
 
+_last_extracted_cad_plan: Optional[Dict[str, Any]] = None
+
+
+def get_last_extracted_cad_plan() -> Optional[Dict[str, Any]]:
+    global _last_extracted_cad_plan
+    return _last_extracted_cad_plan
+
+
+def extract_cad_plan_from_file(file_path: Path) -> Optional[Dict[str, Any]]:
+    """Extrae el plan de operaciones CAD para Solid Edge desde un archivo (plano técnico, imagen o PDF)."""
+    global _last_extracted_cad_plan
+    if _last_extracted_cad_plan:
+        plan = _last_extracted_cad_plan
+        _last_extracted_cad_plan = None
+        return plan
+
+    ext = file_path.suffix.lower()
+    
+    # 1. Intentar con Gemini Multimodal Vision
+    if ext in [".jpg", ".jpeg", ".png", ".bmp", ".webp", ".pdf"]:
+        text_resp, plan_dict = analyze_blueprint_with_gemini(file_path)
+        if plan_dict:
+            _last_extracted_cad_plan = plan_dict
+            return plan_dict
+
+    # 2. Análisis por OCR / texto si es imagen o PDF
+    text_content = ""
+    if ext in [".jpg", ".jpeg", ".png", ".bmp", ".webp"]:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            engine = RapidOCR()
+            result, _ = engine(str(file_path))
+            if result:
+                text_content = " ".join([line[1] for line in result])
+        except Exception:
+            pass
+    elif ext == ".pdf":
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(str(file_path))
+            text_content = " ".join([(p.extract_text() or "") for p in reader.pages[:4]])
+        except Exception:
+            pass
+
+    # 3. Analizar texto técnico con parser CAD
+    if text_content:
+        from cad_engine import parse_natural_language_or_drawing_to_cad_plan
+        plan = parse_natural_language_or_drawing_to_cad_plan(text_content)
+        _last_extracted_cad_plan = plan
+        return plan
+
+    return None
+
+
 def analyze_image(file_path: Path) -> str:
+    global _last_extracted_cad_plan
     from PIL import Image
     img = Image.open(str(file_path))
     w, h = img.size
     mode = img.mode
     fmt = img.format
+
+    # Intentar análisis técnico multimodal con Gemini Vision
+    gemini_text, gemini_plan = analyze_blueprint_with_gemini(file_path)
+    if gemini_text:
+        _last_extracted_cad_plan = gemini_plan
+        return (
+            f"📐 Plano Técnico e Imagen '{file_path.name}' ({w}x{h} px):\n\n"
+            f"{gemini_text}"
+        )
 
     ocr_text = ""
     try:
@@ -130,9 +304,11 @@ def analyze_image(file_path: Path) -> str:
         f"• Resolución: {w} x {h} px | Modo de color: {mode} | Formato: {fmt}\n"
     )
     if ocr_text:
-        res += f"• Texto/Cotas detectadas por visión OCR en la imagen:\n  \"{ocr_text[:1500]}\""
+        res += f"• Cotas y texto detectados por visión en el plano:\n  \"{ocr_text[:1500]}\""
+        from cad_engine import parse_natural_language_or_drawing_to_cad_plan
+        _last_extracted_cad_plan = parse_natural_language_or_drawing_to_cad_plan(ocr_text)
     else:
-        res += "• Imagen visual procesada correctamente (sin texto impreso detectado)."
+        res += "• Imagen visual procesada correctamente."
     return res
 
 
