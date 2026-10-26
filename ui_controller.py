@@ -67,14 +67,72 @@ def press_vk(vk_code: int):
 
 
 def send_text_and_keys(text: str, press_enter: bool = False):
-    """Escribe cualquier texto o comentario en la ventana activa usando portapapeles + Ctrl+V."""
-    import pyperclip
-    pyperclip.copy(text)
-    time.sleep(0.1)
-    pyautogui.hotkey("ctrl", "v")
-    if press_enter:
-        time.sleep(0.12)
-        pyautogui.press("enter")
+    """Escribe cualquier texto o comentario en la ventana activa usando portapapeles + Ctrl+V de forma segura."""
+    try:
+        import pyperclip
+        pyperclip.copy(text)
+    except Exception:
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", f"Set-Clipboard -Value {json.dumps(text)}"],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=2,
+            )
+        except Exception:
+            pass
+    time.sleep(0.12)
+    try:
+        pyautogui.hotkey("ctrl", "v")
+        if press_enter:
+            time.sleep(0.18)
+            pyautogui.press("enter")
+    except Exception:
+        pass
+
+
+def focus_and_maximize_chrome_window(title_keyword: str = "") -> Optional[Tuple[int, int, int, int]]:
+    """
+    Trae al frente y maximiza la ventana de Google Chrome (o la que contenga title_keyword)
+    para que los atajos de teclado y clics caigan siempre dentro de la aplicación web y nunca en Jarvis.
+    Devuelve (left, top, right, bottom) de la ventana.
+    """
+    try:
+        from pywinauto import Desktop
+        desk = Desktop(backend="uia")
+        target_win = None
+        kw = title_keyword.lower().strip()
+
+        for win in desk.windows():
+            if not win.is_visible():
+                continue
+            title = (win.window_text() or "").strip()
+            t_low = title.lower()
+            if "j.a.r.v.i.s" in t_low:
+                continue
+            if kw and kw in t_low:
+                target_win = win
+                break
+            if "chrome" in t_low or "edge" in t_low or "whatsapp" in t_low:
+                target_win = win
+
+        if target_win:
+            try:
+                target_win.set_focus()
+            except Exception:
+                pass
+            try:
+                user32.ShowWindow(target_win.handle, 3)  # SW_MAXIMIZE = 3
+            except Exception:
+                pass
+            time.sleep(0.25)
+            r = target_win.rectangle()
+            return (int(r.left), int(r.top), int(r.right), int(r.bottom))
+    except Exception:
+        pass
+
+    sw = user32.GetSystemMetrics(0)
+    sh = user32.GetSystemMetrics(1)
+    return (0, 0, sw, sh)
 
 
 def click_ui_element_by_uia_or_ocr(target_text: str, double_click: bool = False, right_click: bool = False) -> Optional[Tuple[int, int]]:
@@ -115,27 +173,30 @@ def click_ui_element_by_uia_or_ocr(target_text: str, double_click: bool = False,
 
 
 def find_text_on_screen_and_click(target_text: str, double_click: bool = False, right_click: bool = False) -> Optional[Tuple[int, int]]:
-    screenshot_path = Path("C:/Jarvis/logs/screen_scan.png")
-    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-    img = ImageGrab.grab()
-    img.save(str(screenshot_path))
+    try:
+        screenshot_path = Path("C:/Jarvis/logs/screen_scan.png")
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        img = ImageGrab.grab()
+        img.save(str(screenshot_path))
 
-    ocr = get_ocr()
-    result, _ = ocr(str(screenshot_path))
-    if not result:
-        return None
+        ocr = get_ocr()
+        result, _ = ocr(str(screenshot_path))
+        if not result:
+            return None
 
-    target_low = target_text.lower().strip()
-    for item in result:
-        box, detected_text, _ = item[0], item[1], item[2]
-        if target_low in detected_text.lower():
-            xs = [pt[0] for pt in box]
-            ys = [pt[1] for pt in box]
-            cx = int(sum(xs) / 4.0)
-            cy = int(sum(ys) / 4.0)
-            btn = "right" if right_click else "left"
-            mouse_click(cx, cy, button=btn, double=double_click)
-            return (cx, cy)
+        target_low = target_text.lower().strip()
+        for item in result:
+            box, detected_text, _ = item[0], item[1], item[2]
+            if target_low in detected_text.lower():
+                xs = [pt[0] for pt in box]
+                ys = [pt[1] for pt in box]
+                cx = int(sum(xs) / 4.0)
+                cy = int(sum(ys) / 4.0)
+                btn = "right" if right_click else "left"
+                mouse_click(cx, cy, button=btn, double=double_click)
+                return (cx, cy)
+    except Exception:
+        pass
     return None
 
 
@@ -287,8 +348,8 @@ def play_video_on_youtube_autonomous(query: str) -> str:
         # Si abrió lista de resultados, hacer clic automático en el primer video tras cargar
         def _click_first_yt():
             time.sleep(3.2)
-            scr = ImageGrab.grab()
-            w, h = scr.size
+            w = user32.GetSystemMetrics(0)
+            h = user32.GetSystemMetrics(1)
             mouse_click(int(w * 0.38), int(h * 0.36), button="left", double=False)
         threading.Thread(target=_click_first_yt, daemon=True).start()
 
