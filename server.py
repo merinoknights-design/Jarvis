@@ -26,7 +26,7 @@ from cad_engine import (
 from file_analyzer import analyze_any_file, UPLOAD_DIR
 from git_sync import set_github_remote, push_update_to_github, pull_update_from_github
 from intent_engine import classify_user_intent
-from task_manager import run_background_task, pop_completed_notifications
+from task_manager import execute_smart_task, pop_completed_notifications
 from ui_controller import (
     play_song_on_spotify_autonomous,
     play_video_on_youtube_autonomous,
@@ -146,11 +146,10 @@ def play_on_spotify(song_query: str) -> str:
         return f"Abriendo Spotify con la canción '{clean_song}', Señor."
 
 
-def instant_conversational_and_action_brain(user_msg: str) -> Optional[Dict[str, str]]:
+def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = False) -> Optional[Dict[str, str]]:
     """
-    Usa el Motor de Razonamiento Multi-Ciclo (intent_engine.py) para distinguir con criterio propio
-    entre reproducir canciones (ej. 'pon Ansiedad', 'pon Mejores amigos'), hacer clics/scroll,
-    modelar en Solid Edge 2026 o conversar/investigar en internet.
+    Ejecuta órdenes con respuestas cortas y directas.
+    Solo anuncia 'segundo plano' cuando hay 2 o más tareas simultáneas.
     """
     global recent_created_parts
     intent_data = classify_user_intent(user_msg)
@@ -158,49 +157,43 @@ def instant_conversational_and_action_brain(user_msg: str) -> Optional[Dict[str,
     cleaned = intent_data["cleaned_text"]
     low = cleaned.lower()
 
-    # Si el motor de razonamiento determinó con alta confianza que es REPRODUCIR EN SPOTIFY
     if intent == "PLAY_SPOTIFY":
         song = intent_data.get("song_query", "").strip()
         if song and song.lower() not in ["spotify", "música", "musica"]:
-            run_background_task(
-                f"Reproducir '{song}' en Spotify",
+            info = execute_smart_task(
+                f"Reproducir '{song}'",
                 lambda: play_song_on_spotify_autonomous(song),
-                tool_name="puppeteer"
+                tool_name="puppeteer",
+                force_background=force_bg
             )
-            return {
-                "reply": f"Enseguida, Señor. Estoy buscando y poniendo '{song}' en Spotify en segundo plano; le avisaré en unos segundos apenas esté sonando.",
-                "tool_used": "puppeteer"
-            }
+            if info["queued_in_background"]:
+                return {"reply": f"En cola en segundo plano: '{song}' en Spotify. Le aviso al terminar, Señor.", "tool_used": "puppeteer"}
+            return {"reply": f"Reproduciendo '{song}' en Spotify, Señor.", "tool_used": "puppeteer"}
         try:
             os.startfile("spotify:")
         except Exception:
             os.startfile("https://open.spotify.com")
-        return {"reply": "Abriendo Spotify, Señor. Dígame qué canción o artista desea escuchar.", "tool_used": "puppeteer"}
+        return {"reply": "Spotify abierto, Señor.", "tool_used": "puppeteer"}
 
-    # Si el motor de razonamiento determinó que es REPRODUCIR EN YOUTUBE
     if intent == "PLAY_YOUTUBE":
         song = intent_data.get("song_query", "").strip()
         if song and song.lower() != "youtube":
             return {"reply": play_video_on_youtube_autonomous(song), "tool_used": "puppeteer"}
         os.startfile("https://www.youtube.com")
-        return {"reply": "Abriendo YouTube, Señor.", "tool_used": "puppeteer"}
+        return {"reply": "YouTube abierto, Señor.", "tool_used": "puppeteer"}
 
-    # 1. Llamado directo o saludos
+    # 1. Llamado directo o saludos cortos
     if user_msg.lower().strip() in ["jarvis", "hey jarvis", "oye jarvis", "estás ahí", "estas ahi"]:
-        return {"reply": "Aquí estoy, Señor. Lo escucho fuerte y claro. ¿De qué hablamos o qué ejecutamos?", "tool_used": "memory"}
+        return {"reply": "Sí, Señor. Dígame.", "tool_used": "memory"}
 
     if low in ["hola", "buenas", "buenos dias", "buenos días", "buenas tardes", "buenas noches", "hey", "qué tal", "que tal"]:
-        resps = [
-            "¡Hola, Señor! Qué gusto saludarlo. ¿Cómo va todo hoy? Estoy listo para conversar, investigar cualquier tema o ejecutar lo que me pida.",
-            "¡Buenas, Señor! Todos mis sistemas están al 100%. ¿De qué quiere que hablemos o qué programa abrimos hoy?"
-        ]
-        return {"reply": random.choice(resps), "tool_used": "memory"}
+        return {"reply": "¡Hola, Señor! Todo en línea. ¿Qué hacemos?", "tool_used": "memory"}
 
     if any(p in low for p in ["cómo estás", "como estas", "cómo te sientes", "como te va"]):
-        return {"reply": "Me encuentro de maravilla, Señor, con los circuitos al 100% y listo para asistirle. ¿Y usted cómo está hoy?", "tool_used": "memory"}
+        return {"reply": "Al 100%, Señor. ¿Y usted qué tal?", "tool_used": "memory"}
 
     if any(p in low for p in ["quién eres", "quien eres", "tienes conciencia", "qué eres", "que eres"]):
-        return {"reply": "Soy J.A.R.V.I.S., su inteligencia artificial personal. Tengo conversación propia, búsqueda en tiempo real y control sobre sus aplicaciones y diseños, Señor.", "tool_used": "memory"}
+        return {"reply": "Soy J.A.R.V.I.S., su asistente personal, Señor.", "tool_used": "memory"}
 
     # Debate clásico: Messi vs CR7
     if "messi" in low and ("cr7" in low or "cristiano" in low or "ronaldo" in low or "mejor" in low):
@@ -264,26 +257,22 @@ def instant_conversational_and_action_brain(user_msg: str) -> Optional[Dict[str,
             def _cad_v8_job():
                 res = generate_full_v8_project_in_solidedge("Conjunto_Mecanico", PROJECTS_ROOT)
                 recent_created_parts.extend([f for f in res["created_files"] if f.endswith(".par")])
-                files_list = "\n".join([f"  • {Path(f).name}" for f in res["created_files"]])
-                return f"Conjunto de piezas sólidas y ensamblaje terminado en Modo Ordenado en Solid Edge 2026:\n{files_list}"
+                return f"Conjunto creado en Solid Edge ({len(res['created_files'])} archivos)."
 
-            run_background_task("Modelar Conjunto Sólido en Solid Edge 2026", _cad_v8_job, tool_name="filesystem")
-            return {
-                "reply": "Enseguida, Señor. He iniciado en segundo plano el modelado 3D en Modo Ordenado de todas las piezas y su ensamblaje en Solid Edge 2026. Le avisaré apenas termine.",
-                "tool_used": "filesystem"
-            }
+            info = execute_smart_task("Conjunto Solid Edge", _cad_v8_job, tool_name="filesystem", force_background=force_bg)
+            if info["queued_in_background"]:
+                return {"reply": "En segundo plano: creando conjunto en Solid Edge. Le aviso al terminar, Señor.", "tool_used": "filesystem"}
+            return {"reply": "Creando el conjunto sólido en Solid Edge 2026, Señor.", "tool_used": "filesystem"}
         else:
             def _cad_part_job():
                 res = generate_custom_solid_part(cleaned, PROJECTS_ROOT / "Piezas_Personalizadas")
                 recent_created_parts.append(res["file"])
-                ops = "\n".join([f"  {op}" for op in res.get("tree_operations", [])])
-                return f"Pieza sólida terminada en Modo Ordenado en Solid Edge 2026:\nÁrbol de Trabajo (PathFinder):\n{ops}\nArchivo guardado: {res['file']}"
+                return f"Pieza lista en Solid Edge: {Path(res['file']).name}"
 
-            run_background_task("Modelar Pieza Sólida en Solid Edge 2026", _cad_part_job, tool_name="filesystem")
-            return {
-                "reply": "Orden recibida, Señor. Estoy construyendo la pieza sólida por bocetos, protrusiones y redondeos en segundo plano dentro de Solid Edge 2026; le avisaré apenas esté lista.",
-                "tool_used": "filesystem"
-            }
+            info = execute_smart_task("Pieza Solid Edge", _cad_part_job, tool_name="filesystem", force_background=force_bg)
+            if info["queued_in_background"]:
+                return {"reply": "En segundo plano: modelando pieza en Solid Edge. Le aviso al terminar, Señor.", "tool_used": "filesystem"}
+            return {"reply": "Modelando la pieza en Modo Ordenado en Solid Edge 2026, Señor.", "tool_used": "filesystem"}
 
     # 6. CONTROL DE INTERFAZ GRÁFICA (CLICS POR VISIÓN OCR, SCROLL, TECLADO, COMENTARIOS Y MULTIMEDIA)
     # 6.1 Hacer clic sobre cualquier palabra o botón en pantalla usando Visión OCR
@@ -535,8 +524,32 @@ async def chat(request: Request):
     if not user_msg:
         return JSONResponse({"error": "Mensaje vacío"}, status_code=400)
 
-    # 1. CEREBRO INSTANTÁNEO (<0.05s): Saludos, conciencia, debates, Spotify, CAD explícito, Archivos
-    instant = instant_conversational_and_action_brain(user_msg)
+    # Detectar si el usuario pidió 2 o más tareas en la misma orden (ej: "pon Ansiedad y crea una brida en Solid Edge")
+    sub_orders = [
+        s.strip() for s in re.split(
+            r"\s+(?:y\s+adem[aá]s|y\s+luego|y\s+tambi[eé]n|;\s*|\s+y\s+(?=(?:pon|reproduce|abre|crea|modela|haz|busca|escribe)))\s*",
+            user_msg,
+            flags=re.IGNORECASE
+        ) if s.strip()
+    ]
+
+    if len(sub_orders) >= 2 and not use_search:
+        replies = []
+        last_tool = "memory"
+        for idx, sub in enumerate(sub_orders):
+            # Si son 2 o más tareas, las ejecuta en modo multitarea en segundo plano y avisa al terminar
+            res = instant_conversational_and_action_brain(sub, force_bg=(idx > 0))
+            if res:
+                replies.append(res["reply"])
+                last_tool = res.get("tool_used") or last_tool
+        if replies:
+            combined = " ".join(replies)
+            conversation_history.append({"role": "user", "content": user_msg})
+            conversation_history.append({"role": "assistant", "content": combined})
+            return {"reply": combined, "tool_used": last_tool}
+
+    # 1. CEREBRO INSTANTÁNEO (<0.05s): 1 sola tarea -> respuesta corta y sin hablar de segundo plano
+    instant = instant_conversational_and_action_brain(user_msg, force_bg=False)
     if instant and not use_search:
         conversation_history.append({"role": "user", "content": user_msg})
         conversation_history.append({"role": "assistant", "content": instant["reply"]})

@@ -611,9 +611,9 @@
         const res = await fetch('/api/notifications');
         const data = await res.json();
 
-        if (data.active_tasks && data.active_tasks.length > 0) {
+        if (data.active_tasks && data.active_tasks.length >= 2) {
           document.getElementById('stateLabel').textContent =
-            `⏳ TAREA EN 2º PLANO: ${data.active_tasks[0].title.toUpperCase()}...`;
+            `⏳ ${data.active_tasks.length} TAREAS EN 2º PLANO: ${data.active_tasks[0].title.toUpperCase()}...`;
         }
 
         if (data.completed && data.completed.length > 0) {
