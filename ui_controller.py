@@ -278,11 +278,120 @@ def play_song_on_spotify_autonomous(song_query: str) -> str:
 
 
 def play_video_on_youtube_autonomous(query: str) -> str:
-    """Busca el primer video de YouTube y lo abre reproduciéndose directamente."""
+    """Busca el primer video de YouTube en Chrome, lo abre y verifica inicio de reproducción."""
     direct_url = resolve_youtube_video_url(query)
-    if direct_url:
-        os.startfile(direct_url)
-        return f"Reproduciendo '{query}' directamente en YouTube, Señor."
-    q = urllib.parse.quote(query.strip())
-    os.startfile(f"https://www.youtube.com/results?search_query={q}")
-    return f"Abriendo resultados de '{query}' en YouTube, Señor."
+    target_url = direct_url if direct_url else f"https://www.youtube.com/results?search_query={urllib.parse.quote(query.strip())}"
+    open_url_in_chrome(target_url)
+
+    if not direct_url:
+        # Si abrió lista de resultados, hacer clic automático en el primer video tras cargar
+        def _click_first_yt():
+            time.sleep(3.2)
+            scr = ImageGrab.grab()
+            w, h = scr.size
+            mouse_click(int(w * 0.38), int(h * 0.36), button="left", double=False)
+        threading.Thread(target=_click_first_yt, daemon=True).start()
+
+    return f"Reproduciendo '{query}' en YouTube dentro de Chrome, Señor."
+
+
+def find_chrome_exe() -> Optional[str]:
+    candidates = [
+        Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+        Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
+        Path.home() / "AppData/Local/Google/Chrome/Application/chrome.exe",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
+
+
+def open_url_in_chrome(url: str) -> bool:
+    """Abre cualquier URL directamente en Google Chrome con la sesión activa del usuario."""
+    chrome_exe = find_chrome_exe()
+    if chrome_exe:
+        subprocess.Popen([chrome_exe, url])
+        return True
+    os.startfile(url)
+    return False
+
+
+def check_if_login_required_on_screen() -> bool:
+    """
+    Escanea la pantalla con OCR tras abrir una Web App en Chrome para saber si el usuario
+    ya está logueado o si la página le está pidiendo Iniciar Sesión.
+    """
+    try:
+        screenshot_path = Path("C:/Jarvis/logs/login_check.png")
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        img = ImageGrab.grab()
+        img.save(str(screenshot_path))
+        ocr = get_ocr()
+        result, _ = ocr(str(screenshot_path))
+        if not result:
+            return False
+        full_text = " ".join([item[1].lower() for item in result])
+        login_indicators = [
+            "iniciar sesión", "iniciar sesion", "inicia sesión", "sign in",
+            "log in", "introduce tu contraseña", "ingresa tu correo",
+            "usa tu cuenta de google", "elegir una cuenta"
+        ]
+        return any(ind in full_text for ind in login_indicators)
+    except Exception:
+        return False
+
+
+def send_gmail_in_chrome(to_email: str = "", subject: str = "", body_text: str = "", auto_send: bool = True) -> str:
+    """
+    Abre Gmail en Google Chrome con los campos Para, Asunto y Cuerpo ya rellenados.
+    Verifica si el usuario está logueado:
+      - Si no está logueado, le pide iniciar sesión.
+      - Si ya está logueado y hay destinatario/mensaje, pulsa 'Enviar' automáticamente.
+    """
+    params = {"view": "cm", "fs": "1"}
+    if to_email:
+        params["to"] = to_email.strip()
+    if subject:
+        params["su"] = subject.strip()
+    if body_text:
+        params["body"] = body_text.strip()
+
+    compose_url = "https://mail.google.com/mail/?" + urllib.parse.urlencode(params)
+    open_url_in_chrome(compose_url)
+
+    time.sleep(4.0)
+    if check_if_login_required_on_screen():
+        return "Señor, abrí Gmail en Google Chrome pero veo que no ha iniciado sesión. Por favor inicie sesión en su cuenta y yo continuaré con el envío."
+
+    if to_email and (body_text or subject) and auto_send:
+        time.sleep(1.5)
+        # Intentar hacer clic en el botón 'Enviar' / 'Send' o usar el atajo oficial de Gmail (Ctrl + Enter)
+        clicked = click_ui_element_by_uia_or_ocr("Enviar", double_click=False, right_click=False)
+        if not clicked:
+            pyautogui.hotkey("ctrl", "enter")
+        return f"Correo redactado y enviado en Gmail para '{to_email}' desde Google Chrome, Señor."
+
+    return "He abierto la ventana de redacción de Gmail en su Google Chrome con su sesión activa, Señor."
+
+
+def open_web_app_in_chrome_with_login_check(app_name: str, direct_url: str) -> str:
+    """Abre cualquier aplicación en Google Chrome y verifica si el usuario ya tiene sesión iniciada."""
+    open_url_in_chrome(direct_url)
+
+    def _verify_session():
+        time.sleep(3.8)
+        if check_if_login_required_on_screen():
+            from task_manager import COMPLETED_NOTIFICATIONS, _lock
+            with _lock:
+                COMPLETED_NOTIFICATIONS.append({
+                    "id": "login_notice",
+                    "title": f"Sesión en {app_name}",
+                    "message": f"🔐 Señor, he abierto {app_name} en Google Chrome, pero necesita iniciar sesión en su cuenta para que pueda operar dentro.",
+                    "voice_summary": f"Señor, por favor inicie sesión en {app_name} dentro de Chrome para poder continuar.",
+                    "tool_used": "puppeteer",
+                    "status": "done"
+                })
+
+    threading.Thread(target=_verify_session, daemon=True).start()
+    return f"Abriendo {app_name} en su Google Chrome, Señor."

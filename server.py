@@ -30,6 +30,9 @@ from task_manager import execute_smart_task, pop_completed_notifications
 from ui_controller import (
     play_song_on_spotify_autonomous,
     play_video_on_youtube_autonomous,
+    send_gmail_in_chrome,
+    open_web_app_in_chrome_with_login_check,
+    open_url_in_chrome,
     click_ui_element_by_uia_or_ocr,
     find_text_on_screen_and_click,
     mouse_click,
@@ -357,7 +360,29 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             os.startfile("https://open.spotify.com")
         return {"reply": "Abriendo Spotify, Señor.", "tool_used": "puppeteer"}
 
-    # 7. HORA / DIAGNÓSTICO / CARPETAS / APLICACIONES
+    # 7.0 ENVIAR CORREOS POR GMAIL DESDE GOOGLE CHROME (SIN NECESITAR APP DE ESCRITORIO)
+    if any(w in low for w in ["correo", "gmail", "email", "e-mail", "manda un mail", "envía un mail", "enviar correo", "mandar correo"]):
+        email_match = re.search(r"([\w\.\-]+@[\w\.\-]+\.\w+)", cleaned)
+        to_addr = email_match.group(1) if email_match else ""
+        subj_match = re.search(r"(?:asunto|titulo|título)\s+([^,]+?)(?:\s+diciendo|\s+mensaje|\s+que diga|$)", cleaned, re.IGNORECASE)
+        body_match = re.search(r"(?:diciendo|que diga|mensaje|contenido|texto)\s*[:\s]\s*(.+)$", cleaned, re.IGNORECASE)
+        subject_txt = subj_match.group(1).strip() if subj_match else "Mensaje de J.A.R.V.I.S."
+        body_txt = body_match.group(1).strip() if body_match else ""
+
+        if any(v in low for v in ["manda", "mandar", "envía", "envia", "enviar", "redacta", "redactar", "escribe un correo"]):
+            execute_smart_task(
+                "Enviar Correo en Gmail (Chrome)",
+                lambda: send_gmail_in_chrome(to_addr, subject_txt, body_txt, auto_send=bool(to_addr and body_txt)),
+                tool_name="puppeteer",
+                force_background=force_bg
+            )
+            if to_addr:
+                return {"reply": f"Abriendo Gmail en su Google Chrome y preparando el correo para {to_addr}, Señor.", "tool_used": "puppeteer"}
+            return {"reply": "Abriendo redacción de Gmail en su Google Chrome, Señor. Si no ha iniciado sesión, se lo avisaré.", "tool_used": "puppeteer"}
+        else:
+            return {"reply": open_web_app_in_chrome_with_login_check("Gmail", "https://mail.google.com"), "tool_used": "puppeteer"}
+
+    # 7. HORA / DIAGNÓSTICO / CARPETAS / APLICACIONES Y WEB APPS EN CHROME
     if any(p in low for p in ["qué hora es", "que hora es", "dime la hora"]):
         now = datetime.datetime.now()
         return {"reply": f"Señor, son las {now.strftime('%H:%M')} del {now.strftime('%d/%m/%Y')}.", "tool_used": "time"}
@@ -386,9 +411,12 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
         formatted = "\n".join([f"{'📁' if i.is_dir() else '📄'} {i.name}" for i in items]) if items else "Carpeta vacía"
         return {"reply": f"Contenido de {folder_label}:\n{formatted}", "tool_used": "filesystem"}
 
-    if low.startswith(("abre ", "abrir ", "ejecuta ", "ejecutar ", "inicia ", "iniciar ")):
-        app_req = re.sub(r"^(abre|abrir|ejecuta|ejecutar|inicia|iniciar)\s+(la aplicaci[oó]n\s+|el programa\s+)?", "", low).strip()
-        quick_apps = {
+    if low.startswith(("abre ", "abrir ", "ejecuta ", "ejecutar ", "inicia ", "iniciar ", "entra a ", "entrar a ", "ve a ")):
+        app_req = re.sub(r"^(abre|abrir|ejecuta|ejecutar|inicia|iniciar|entra\s+a|entrar\s+a|ve\s+a)\s+(la aplicaci[oó]n\s+|el programa\s+|en chrome\s+)?", "", low).strip()
+        app_req = re.sub(r"\s+en\s+(?:google\s+)?chrome$", "", app_req).strip()
+
+        # Aplicaciones nativas del sistema
+        native_apps = {
             "calculadora": "calc.exe",
             "bloc de notas": "notepad.exe",
             "notepad": "notepad.exe",
@@ -398,22 +426,60 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             "powershell": "powershell.exe",
             "administrador de tareas": "taskmgr.exe",
             "chrome": "chrome",
+            "google chrome": "chrome",
             "edge": "msedge",
-            "youtube": "https://www.youtube.com",
-            "whatsapp": "https://web.whatsapp.com",
         }
-        for k, v in quick_apps.items():
-            if k in app_req:
-                if v.startswith("http"):
-                    os.startfile(v)
-                else:
-                    subprocess.Popen(v, shell=True)
+        for k, v in native_apps.items():
+            if k == app_req or k in app_req:
+                if v == "chrome":
+                    open_url_in_chrome("https://www.google.com")
+                    return {"reply": "Google Chrome abierto, Señor.", "tool_used": "puppeteer"}
+                subprocess.Popen(v, shell=True)
                 return {"reply": f"Abriendo {k.capitalize()}, Señor.", "tool_used": "filesystem"}
 
+        # Buscar si está instalada en el escritorio / Menú Inicio de Windows
         found_lnk = find_shortcut_or_exe(app_req)
-        if found_lnk:
+        if found_lnk and "chrome" not in low:
             os.startfile(found_lnk)
-            return {"reply": f"Iniciando {app_req.capitalize()}, Señor.", "tool_used": "filesystem"}
+            return {"reply": f"Iniciando {app_req.capitalize()} desde su escritorio, Señor.", "tool_used": "filesystem"}
+
+        # Si NO está instalada en el escritorio (o pidió abrirla en Chrome), abrir la Web App en Google Chrome y verificar sesión
+        chrome_web_apps = {
+            "gmail": ("Gmail", "https://mail.google.com"),
+            "outlook": ("Outlook", "https://outlook.live.com"),
+            "hotmail": ("Outlook", "https://outlook.live.com"),
+            "whatsapp": ("WhatsApp Web", "https://web.whatsapp.com"),
+            "youtube": ("YouTube", "https://www.youtube.com"),
+            "instagram": ("Instagram", "https://www.instagram.com"),
+            "facebook": ("Facebook", "https://www.facebook.com"),
+            "tiktok": ("TikTok", "https://www.tiktok.com"),
+            "twitter": ("X / Twitter", "https://x.com"),
+            "x": ("X / Twitter", "https://x.com"),
+            "drive": ("Google Drive", "https://drive.google.com"),
+            "google drive": ("Google Drive", "https://drive.google.com"),
+            "docs": ("Google Docs", "https://docs.google.com"),
+            "google docs": ("Google Docs", "https://docs.google.com"),
+            "calendar": ("Google Calendar", "https://calendar.google.com"),
+            "calendario": ("Google Calendar", "https://calendar.google.com"),
+            "canva": ("Canva", "https://www.canva.com"),
+            "netflix": ("Netflix", "https://www.netflix.com"),
+            "discord": ("Discord Web", "https://discord.com/app"),
+            "github": ("GitHub", "https://github.com"),
+            "chatgpt": ("ChatGPT", "https://chatgpt.com"),
+            " google": ("Google", "https://www.google.com"),
+        }
+        for key, (label, url) in chrome_web_apps.items():
+            if key in app_req:
+                return {"reply": open_web_app_in_chrome_with_login_check(label, url), "tool_used": "puppeteer"}
+
+        # Si pide cualquier otra aplicación o web que no está en el diccionario, abrirla en Chrome
+        if "." in app_req and " " not in app_req:
+            url = app_req if app_req.startswith("http") else f"https://{app_req}"
+            return {"reply": open_web_app_in_chrome_with_login_check(app_req, url), "tool_used": "puppeteer"}
+        else:
+            search_url = f"https://www.google.com/search?q={urllib.parse.quote(app_req)}"
+            open_url_in_chrome(search_url)
+            return {"reply": f"Como '{app_req}' no está instalado en el escritorio, lo he abierto en Google Chrome, Señor.", "tool_used": "puppeteer"}
 
     return None
 
