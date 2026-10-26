@@ -91,39 +91,38 @@ def _clean_extracted_contact(raw_cand: str) -> str:
 
 def _extract_explicit_contact(text: str) -> str:
     """
-    Extrae con precisión cualquier nombre de contacto (de 1 a 4 palabras, con mayúsculas o minúsculas),
-    incluyendo cuando el usuario pide cambiar de chat en la misma conversación:
-    - "manda otro mensaje a Matias diciendo hola" -> "Matias"
-    - "manda otro mensaje a Matias Neiza diciendo hola" -> "Matias Neiza"
-    - "ahora manda un mensaje a Mi Niña Chiquita diciendo hola" -> "Mi Niña Chiquita"
-    - "cambia al chat de Thomas Medina y escribe hola" -> "Thomas Medina"
-    - "un mensaje a david diciendo prueba 123" -> "david"
+    Extrae el nombre del contacto en 2 pasos deterministas:
+    Paso 1: Corta la parte del mensaje (después de 'diciendo', 'que diga', 'y manda', 'manda', 'escribe', 'de prueba', ':').
+    Paso 2: De la primera mitad, toma el nombre después de 'al chat de', 'en el chat de', 'busca a', 'para' o 'a'.
     """
     cleaned = re.sub(r"\b(?:en|por|de|desde)\s+whatsapp(?:\s+web)?\b", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:en\s+la\s+misma\s+conversaci[oó]n)\b", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
-    # Marcadores donde termina el nombre del contacto y empieza el contenido del mensaje
-    end_lookahead = r"(?=\s+(?:y\s+manda\b|y\s+m[aá]ndale\b|y\s+env[ií]a\b|y\s+env[ií]ale\b|y\s+escribe\b|y\s+escr[ií]bele\b|y\s+dile\b|y\s+pon\b|diciendo\b|que\s+diga\b|con\s+el\s+mensaje\b|con\s+el\s+texto\b|de\s+prueba\b|en\s+la\s+misma\b)|[,:.]|$)"
+    # Paso 1: Separar el encabezado donde se menciona al contacto del cuerpo del mensaje
+    # (Se corta en el separador de mensaje que ocurra DESPUÉS de haber mencionado al contacto)
+    contact_part = cleaned
+    sep_match = re.search(
+        r"\b(?:al\s+chat\s+de|en\s+el\s+chat\s+de|chat\s+de|al\s+perfil\s+de|perfil\s+de|busca\s+a|buscar\s+a|cambia\s+a|para|a)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+(?:\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+){0,3}?)\s+(?:diciendo|que\s+diga|con\s+el\s+mensaje|con\s+el\s+texto|y\s+dile|y\s+m[aá]ndale|y\s+manda|y\s+env[ií]ale|y\s+env[ií]a|y\s+escr[ií]bele|y\s+escribe|y\s+ponle|manda|escribe|de\s+prueba|[:])\b",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if sep_match:
+        cand = _clean_extracted_contact(sep_match.group(1))
+        if cand:
+            return cand
 
-    explicit_patterns = [
-        # 1. "al chat de X", "en el chat de X", "cambia a X", "busca (a) X", "al perfil de X", "al contacto X"
-        rf"\b(?:cambia\s+al\s+chat\s+de|cambia\s+a|entra\s+al\s+chat\s+de|en\s+el\s+chat\s+de|al\s+chat\s+de|chat\s+de|entra\s+al\s+perfil\s+de|al\s+perfil\s+de|perfil\s+de|al\s+contacto|contacto|busca\s+el\s+chat\s+de|busca\s+a|buscar\s+a|busca)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+(?:\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+){{0,3}}){end_lookahead}",
-        # 2. "manda (otro/un) mensaje (de prueba) (a otro chat) a/para X"
-        rf"\b(?:manda|mandar|m[aá]ndale|m[aá]ndaselo|env[ií]a|enviar|env[ií]ale|env[ií]aselo|escribe|escribir|escr[ií]bele|dile|pon|ponle)\s+(?:otro\s+mensaje\s+de\s+prueba|un\s+mensaje\s+de\s+prueba|mensaje\s+de\s+prueba|otro\s+mensaje|un\s+mensaje|el\s+mensaje|mensaje|otro\s+whatsapp|un\s+whatsapp)?\s*(?:a\s+otro\s+chat\s+|en\s+otro\s+chat\s+)?(?:a|para)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+(?:\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+){{0,3}}){end_lookahead}",
-        # 3. "(otro/un) mensaje a/para X" (sin verbo al inicio)
-        rf"\b(?:otro\s+mensaje|un\s+mensaje|mensaje|ahora)\s+(?:a\s+otro\s+chat\s+)?(?:a|para)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+(?:\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+){{0,3}}){end_lookahead}",
-        # 4. Cualquier "para X" o "a X" (de 1 a 3 palabras) seguido de diciendo / que diga / de prueba
-        rf"\b(?:para|a)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+(?:\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+){{0,2}})(?=\s+(?:diciendo\b|que\s+diga\b|con\s+el\s+mensaje\b|de\s+prueba\b)|[,:.]|$)",
-        # 5. "escríbele a X [mensaje]" o "mándale a X [mensaje]" sin la palabra "diciendo" (toma la primera palabra como contacto)
-        r"\b(?:m[aá]ndale|escr[ií]bele|env[ií]ale|dile|manda\s+otro\s+mensaje|manda\s+un\s+mensaje)\s+(?:a|para)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+)\s+(.+)$",
-    ]
+    # Si el nombre del contacto está al final de la frase (ej. "manda un mensaje de prueba a David")
+    end_match = re.search(
+        r"\b(?:al\s+chat\s+de|en\s+el\s+chat\s+de|chat\s+de|al\s+perfil\s+de|perfil\s+de|busca\s+a|buscar\s+a|cambia\s+a|para|a)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+(?:\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\+\-]+){0,3})$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if end_match:
+        cand = _clean_extracted_contact(end_match.group(1))
+        if cand:
+            return cand
 
-    for idx, pat in enumerate(explicit_patterns):
-        matches = list(re.finditer(pat, cleaned, re.IGNORECASE))
-        for m in reversed(matches):
-            cand = _clean_extracted_contact(m.group(1))
-            if cand:
-                return cand
     return ""
 
 
