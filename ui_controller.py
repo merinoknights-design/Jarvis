@@ -178,42 +178,59 @@ def resolve_youtube_video_url(query: str) -> Optional[str]:
     return None
 
 
-def trigger_spotify_play_button_uia():
+def trigger_spotify_play_button_uia() -> bool:
     """
-    Usa Windows UI Automation (pywinauto backend='uia') para encontrar la ventana de Spotify,
-    ponerla al frente y pulsar directamente el botón verde principal de 'Reproducir' / 'Play' de la canción cargada.
+    Bucle inteligente con criterio de verificación:
+    Recorre en ciclo la ventana de Spotify buscando el botón 'Reproducir'/'Play',
+    lo pulsa y verifica si el estado cambió a 'Pausar'/'Pause' (confirmando que ya está sonando).
     """
     try:
         from pywinauto import Desktop
         desk = Desktop(backend="uia")
-        spotify_win = None
-        for w in desk.windows():
-            title = (w.window_text() or "").lower()
-            cname = (w.element_info.class_name or "").lower()
-            if "spotify" in title or ("chrome_widgetwin" in cname and w.is_visible() and "j.a.r.v.i.s" not in title):
-                if "spotify" in title or any("spotify" in (c.window_text() or "").lower() for c in w.children()):
-                    spotify_win = w
-                    break
 
-        if spotify_win:
+        for attempt in range(4):
+            spotify_win = None
+            for w in desk.windows():
+                title = (w.window_text() or "").lower()
+                cname = (w.element_info.class_name or "").lower()
+                if "spotify" in title or ("chrome_widgetwin" in cname and w.is_visible() and "j.a.r.v.i.s" not in title):
+                    if "spotify" in title or any("spotify" in (c.window_text() or "").lower() for c in w.children()):
+                        spotify_win = w
+                        break
+
+            if not spotify_win:
+                time.sleep(0.8)
+                continue
+
             try:
                 spotify_win.set_focus()
             except Exception:
                 pass
-            time.sleep(0.4)
+            time.sleep(0.35)
 
-            # Buscar los botones de 'Reproducir' o 'Play' dentro de la página de la pista (y > 180 y y < 620)
             win_rect = spotify_win.rectangle()
+            buttons = spotify_win.descendants(control_type="Button")
+
+            # Verificar si ya está reproduciendo (si el botón principal ya dice 'Pausar' / 'Pause')
+            already_playing = False
             play_candidates = []
-            for ctrl in spotify_win.descendants(control_type="Button"):
+
+            for ctrl in buttons:
                 name = (ctrl.window_text() or "").strip().lower()
-                if name in ["reproducir", "play"] or name.startswith("reproducir ") or name.startswith("play "):
-                    r = ctrl.rectangle()
-                    rel_y = r.top - win_rect.top
-                    rel_x = r.left - win_rect.left
-                    # El botón verde grande de Play de la pista o Top Result está en el área central (no en la barra inferior)
-                    if 160 < rel_y < (win_rect.height() - 110) and rel_x > 220:
+                r = ctrl.rectangle()
+                rel_y = r.top - win_rect.top
+                rel_x = r.left - win_rect.left
+
+                # Zona central de la pista/álbum (excluyendo la barra inferior del reproductor)
+                if 150 < rel_y < (win_rect.height() - 105) and rel_x > 200:
+                    if name in ["pausar", "pause"] or name.startswith("pausar ") or name.startswith("pause "):
+                        already_playing = True
+                        break
+                    if name in ["reproducir", "play"] or name.startswith("reproducir ") or name.startswith("play "):
                         play_candidates.append(ctrl)
+
+            if already_playing:
+                return True
 
             if play_candidates:
                 target_btn = play_candidates[0]
@@ -221,11 +238,13 @@ def trigger_spotify_play_button_uia():
                 cx = int((rect.left + rect.right) / 2)
                 cy = int((rect.top + rect.bottom) / 2)
                 mouse_click(cx, cy, button="left", double=False)
-                return True
+                time.sleep(0.7)
+                # En el siguiente ciclo del bucle comprobará si ya pasó a 'Pausar'
+            else:
+                pyautogui.press("enter")
+                time.sleep(0.7)
 
-            # Si cargó spotify:track:ID, presionar Enter en la ventana enfocada inicia la pista seleccionada
-            pyautogui.press("enter")
-            return True
+        return True
     except Exception:
         pass
     return False

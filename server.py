@@ -25,6 +25,7 @@ from cad_engine import (
 )
 from file_analyzer import analyze_any_file, UPLOAD_DIR
 from git_sync import set_github_remote, push_update_to_github, pull_update_from_github
+from intent_engine import classify_user_intent
 from ui_controller import (
     play_song_on_spotify_autonomous,
     play_video_on_youtube_autonomous,
@@ -146,13 +147,34 @@ def play_on_spotify(song_query: str) -> str:
 
 def instant_conversational_and_action_brain(user_msg: str) -> Optional[Dict[str, str]]:
     """
-    Cerebro instantáneo (<0.05s) para conversación natural, conciencia propia, debates famosos y acciones del PC.
+    Usa el Motor de Razonamiento Multi-Ciclo (intent_engine.py) para distinguir con criterio propio
+    entre reproducir canciones (ej. 'pon Ansiedad', 'pon Mejores amigos'), hacer clics/scroll,
+    modelar en Solid Edge 2026 o conversar/investigar en internet.
     """
     global recent_created_parts
-    cleaned = re.sub(r"^(hey\s+jarvis|oye\s+jarvis|hola\s+jarvis|jarvis)[\s,\.:]*", "", user_msg.strip(), flags=re.IGNORECASE).strip()
-    if not cleaned:
-        cleaned = user_msg.strip()
+    intent_data = classify_user_intent(user_msg)
+    intent = intent_data["intent"]
+    cleaned = intent_data["cleaned_text"]
     low = cleaned.lower()
+
+    # Si el motor de razonamiento determinó con alta confianza que es REPRODUCIR EN SPOTIFY
+    if intent == "PLAY_SPOTIFY":
+        song = intent_data.get("song_query", "").strip()
+        if song and song.lower() not in ["spotify", "música", "musica"]:
+            return {"reply": play_song_on_spotify_autonomous(song), "tool_used": "puppeteer"}
+        try:
+            os.startfile("spotify:")
+        except Exception:
+            os.startfile("https://open.spotify.com")
+        return {"reply": "Abriendo Spotify, Señor. Dígame qué canción o artista desea escuchar.", "tool_used": "puppeteer"}
+
+    # Si el motor de razonamiento determinó que es REPRODUCIR EN YOUTUBE
+    if intent == "PLAY_YOUTUBE":
+        song = intent_data.get("song_query", "").strip()
+        if song and song.lower() != "youtube":
+            return {"reply": play_video_on_youtube_autonomous(song), "tool_used": "puppeteer"}
+        os.startfile("https://www.youtube.com")
+        return {"reply": "Abriendo YouTube, Señor.", "tool_used": "puppeteer"}
 
     # 1. Llamado directo o saludos
     if user_msg.lower().strip() in ["jarvis", "hey jarvis", "oye jarvis", "estás ahí", "estas ahi"]:
