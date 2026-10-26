@@ -7,6 +7,22 @@ from typing import Dict, Any, List, Optional
 import pythoncom
 import win32com.client
 
+from cad_edge_selector import (
+    filter_support_edges_for_rounds,
+    filter_top_rim_edges_for_chamfer,
+    filter_inner_cavity_edges
+)
+from cad_validator import (
+    validate_part_model_health,
+    verify_dimensions_against_plan,
+    capture_and_export_solid_edge_model
+)
+from cad_schema import (
+    validate_cad_blueprint_schema,
+    verify_cross_view_consistency,
+    create_standard_piston_plan
+)
+
 # Constantes oficiales de la API de Siemens Solid Edge 2026
 igRight = 1
 igLeft = 2
@@ -19,10 +35,22 @@ seApplicationGlobalDefaultModelingMode = 178
 def get_or_start_solidedge():
     """Conecta con la instancia activa de Solid Edge 2026 o la inicia en Modo Ordenado por defecto."""
     pythoncom.CoInitialize()
+    app = None
     try:
         app = win32com.client.GetActiveObject("SolidEdge.Application")
+        _ = app.Version
     except Exception:
-        app = win32com.client.Dispatch("SolidEdge.Application")
+        app = None
+
+    if app is None:
+        try:
+            app = win32com.client.Dispatch("SolidEdge.Application")
+        except Exception:
+            # Reintento tras breve pausa si había procesos limpiándose
+            import time
+            time.sleep(1.0)
+            app = win32com.client.Dispatch("SolidEdge.Application")
+
     app.Visible = True
     app.DisplayAlerts = False
     # Configurar Solid Edge globalmente para que cree documentos nuevos SIEMPRE en Modo Ordenado (2)
@@ -915,41 +943,48 @@ def build_pieza_mecanica_piston(save_path: Optional[Path] = None) -> Dict[str, A
         save_path = Path("C:/Jarvis/Pieza_mecanica.par")
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    if save_path.exists():
-        try:
-            save_path.unlink()
-        except Exception:
-            import time
-            save_path = save_path.parent / f"{save_path.stem}_{int(time.time())}{save_path.suffix}"
 
-    doc.SaveAs(str(save_path))
-    try:
-        app.StartCommand(32824)  # Vista isométrica
-    except Exception:
-        pass
+    # Validar salud del modelo y regeneración del árbol de operaciones
+    health = validate_part_model_health(doc)
+
+    # Exportación (.par, .step, captura PNG de inspección)
+    exported = capture_and_export_solid_edge_model(doc, save_path)
+
+    plan_info = {
+        "part_name": "Pieza_mecanica",
+        "base_shape": "cylinder_piston",
+        "dimensions_mm": {
+            "outer_radius": 150.0,
+            "inner_radius": 130.0,
+            "total_height": 180.0,
+            "inner_height": 140.0,
+            "central_opening_width": 100.0,
+            "support_width": 40.0,
+            "pin_radius": 25.0,
+            "outer_pin_radius": 45.0,
+            "transition_radius": 100.0,
+            "round_r5": 5.0,
+            "round_r15": 15.0,
+            "chamfer": "5x45",
+            "ring_grooves_depth": 7.5,
+            "ring_grooves_width": 5.0
+        }
+    }
+
+    is_dim_ok, dim_discrepancies = verify_dimensions_against_plan(
+        health.get("bounding_box_mm", {}),
+        plan_info["dimensions_mm"],
+        tolerance_mm=5.0
+    )
 
     return {
-        "file": str(save_path),
-        "plan": {
-            "part_name": "Pieza_mecanica",
-            "base_shape": "cylinder_piston",
-            "dimensions_mm": {
-                "outer_radius": 150.0,
-                "inner_radius": 130.0,
-                "total_height": 180.0,
-                "inner_height": 140.0,
-                "central_opening_width": 100.0,
-                "support_width": 40.0,
-                "pin_radius": 25.0,
-                "outer_pin_radius": 45.0,
-                "transition_radius": 100.0,
-                "round_r5": 5.0,
-                "round_r15": 15.0,
-                "chamfer": "5x45",
-                "ring_grooves_depth": 7.5,
-                "ring_grooves_width": 5.0
-            }
-        },
+        "file": exported.get("par_file", str(save_path)),
+        "step_file": exported.get("step_file"),
+        "inspection_image": exported.get("inspection_image"),
+        "health": health,
+        "is_dimensionally_accurate": is_dim_ok,
+        "dimension_discrepancies": dim_discrepancies,
+        "plan": plan_info,
         "tree_operations": tree_ops
     }
 
