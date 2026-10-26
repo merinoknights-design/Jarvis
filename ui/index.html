@@ -355,6 +355,9 @@
       <span>J.A.R.V.I.S. // AUTONOMOUS CAD 3D & MULTIMODAL</span>
     </div>
     <div style="display:flex; gap:14px; align-items:center;">
+      <div class="status-pill" id="geminiPill" onclick="configureGeminiKey()" style="cursor:pointer;" title="Conectar clave de Google Gemini API o abrir Gemini">
+        ✨ GEMINI + DEEP SEARCH
+      </div>
       <div class="status-pill" id="telemetryPill" title="Telemetría en vivo del Reactor Arc y estación">
         ⚡ ARC: 100% | CPU: --% | RAM: --%
       </div>
@@ -617,58 +620,233 @@
         '<div class="msg jarvis">Memoria reiniciada, Señor. Estoy listo.</div>';
     }
 
-    function toggleContinuousListen() {
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) {
-        alert('Tu navegador no soporta voz directa.');
-        return;
+    async function configureGeminiKey() {
+      const key = prompt(
+        "✨ CONEXIÓN GOOGLE GEMINI:\n\n" +
+        "• Si tienes una API Key de Google AI Studio (empieza por AIza...), pégala aquí para conectar Gemini 2.5 Flash con Google Search directo.\n" +
+        "• O deja en blanco y presiona Aceptar si prefieres abrir tu sesión de Gemini Web en Google Chrome:"
+      );
+      if (key === null) return;
+      if (key.trim().length > 10) {
+        const res = await fetch('/api/gemini/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: key.trim() })
+        });
+        const data = await res.json();
+        if (data.connected) {
+          document.getElementById('geminiPill').textContent = '✨ GEMINI PRO: CONECTADO';
+          appendMsg('jarvis', '¡Excelente, Señor! He vinculado su motor Google Gemini con Google Search Grounding en tiempo real.');
+          speakText('Excelente, Señor. He vinculado su motor Google Gemini en tiempo real.');
+          loadStatus();
+        }
+      } else {
+        sendMessage('Abre Gemini');
       }
-      const btn = document.getElementById('alwaysListenBtn');
-
-      if (recognition) {
-        try { recognition.abort(); } catch (e) {}
-        recognition = null;
-        btn.textContent = '🎤 HABLAR';
-        btn.classList.remove('active');
-        setReactorState('', 'MICRÓFONO LIBRE');
-        return;
-      }
-
-      recognition = new SR();
-      recognition.lang = 'es-ES';
-      recognition.continuous = false;
-      recognition.interimResults = false;
-
-      btn.textContent = '🎙️ ESCUCHANDO...';
-      btn.classList.add('active');
-      setReactorState('listening', 'ESCUCHANDO...');
-
-      recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript.trim();
-        if (transcript) sendMessage(transcript);
-      };
-
-      recognition.onend = () => {
-        try { recognition.abort(); } catch (e) {}
-        recognition = null;
-        btn.textContent = '🎤 HABLAR';
-        btn.classList.remove('active');
-        setReactorState('', 'MICRÓFONO LIBRE');
-      };
-
-      recognition.onerror = () => {
-        try { recognition.abort(); } catch (e) {}
-        recognition = null;
-        btn.textContent = '🎤 HABLAR';
-        btn.classList.remove('active');
-        setReactorState('', 'MICRÓFONO LIBRE');
-      };
-
-      recognition.start();
     }
 
-    document.getElementById('reactor').addEventListener('click', toggleContinuousListen);
+    // ============================================================================
+    // MOTOR DE ESCUCHA ACTIVA Y PALABRA DE ACTIVACIÓN ("HEY JARVIS", "OYE JARVIS", "JARVIS")
+    // Usa WebAudio VAD + /api/transcribe (funciona en Edge y Chrome al 100%)
+    // ============================================================================
+    let wakeWordActive = false;
+    let awakeUntil = 0; // Ventana de conversación activa tras decir "Hey Jarvis"
+    let micStream = null;
+    let audioCtx = null;
+    let analyser = null;
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let isRecordingUtterance = false;
+    let speechStartTime = 0;
+    let lastVoiceTime = 0;
+    let vadInterval = null;
+    let isTranscribing = false;
+    let directSpeakMode = false;
+
+    function checkWakeWordAndExtract(rawTranscript) {
+      const clean = rawTranscript.trim();
+      const low = clean.toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+      // Variantes fonéticas reales cuando el usuario dice "Hey Jarvis", "Oye Jarvis", "Jarvis"
+      const wakeRegex = /^(?:hey\s+|oye\s+|hola\s+|ok\s+|ey\s+|ei\s+|el\s+|a\s+)?(?:jarvis|yarvis|harvis|charvis|llarvis)\b[\s,.:;!?-]*(.*)$/i;
+      const anywhereRegex = /\b(?:hey\s+|oye\s+|hola\s+|ok\s+|ey\s+|el\s+)?(?:jarvis|yarvis|harvis|charvis|llarvis)\b[\s,.:;!?-]*(.*)$/i;
+
+      let match = low.match(wakeRegex) || low.match(anywhereRegex);
+      if (match) {
+        // Extraer la orden después de "Hey Jarvis" conservando el texto original
+        const idx = low.search(/\b(?:jarvis|yarvis|harvis|charvis|llarvis)\b/i);
+        let afterWake = "";
+        if (idx !== -1) {
+          afterWake = clean.slice(idx).replace(/^[a-zA-ZáéíóúñÁÉÍÓÚÑ]+[\s,.:;!?-]*/, "").trim();
+        }
+        return { woke: true, command: afterWake };
+      }
+      return { woke: false, command: clean };
+    }
+
+    async function handleTranscribedSpeech(transcript) {
+      if (!transcript || !transcript.trim()) return;
+      const now = Date.now();
+      const parsed = checkWakeWordAndExtract(transcript);
+
+      if (parsed.woke) {
+        awakeUntil = now + 25000; // 25 segundos de conversación continua abierta
+        if (parsed.command && parsed.command.length >= 2) {
+          // Dijo "Hey Jarvis [orden]" en una sola frase -> ejecutar directo
+          directSpeakMode = false;
+          await sendMessage(parsed.command);
+          awakeUntil = Date.now() + 25000;
+        } else {
+          // Dijo solo "Hey Jarvis" / "Oye Jarvis" / "Jarvis" -> responder y quedar atento a la orden
+          setReactorState('listening', '🟢 SÍ, SEÑOR. DÍGAME SU ORDEN...');
+          appendMsg('user', transcript);
+          const reply = 'Sí, Señor. Lo escucho, dígame.';
+          appendMsg('jarvis', reply);
+          await speakText(reply);
+          setReactorState('listening', '🎙️ ESCUCHANDO SU ORDEN (ACTIVO)...');
+        }
+        return;
+      }
+
+      // Si ya está dentro de la ventana activa (después de haber dicho "Hey Jarvis" o haber pulsado el botón)
+      if (directSpeakMode || now < awakeUntil) {
+        directSpeakMode = false;
+        awakeUntil = now + 25000;
+        await sendMessage(transcript);
+        awakeUntil = Date.now() + 25000;
+      } else {
+        // Mostrar en el estado que escuchó voz pero espera "Hey Jarvis" / "Oye Jarvis" / "Jarvis"
+        setReactorState('listening', `🟢 DIGA "HEY JARVIS" O "JARVIS" (Escuchado: "${transcript.slice(0, 28)}")`);
+      }
+    }
+
+    async function sendAudioChunkToTranscribe(blob) {
+      if (isTranscribing || !blob || blob.size < 600) return;
+      isTranscribing = true;
+      try {
+        setReactorState('listening', '⚡ PROCESANDO SU VOZ...');
+        const res = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': blob.type || 'audio/webm' },
+          body: blob
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.text && data.text.trim()) {
+            await handleTranscribedSpeech(data.text.trim());
+          } else if (wakeWordActive) {
+            setReactorState('listening', Date.now() < awakeUntil ? '🟢 ESCUCHANDO SU ORDEN...' : '🟢 ESCUCHA ACTIVA: DIGA "HEY JARVIS"');
+          }
+        }
+      } catch (e) {
+      } finally {
+        isTranscribing = false;
+      }
+    }
+
+    async function startWakeWordMicrophone(isManualClick = false) {
+      const btn = document.getElementById('alwaysListenBtn');
+      if (isManualClick) {
+        // Si hace clic en el botón o en el Reactor Arc, activa inmediatamente la ventana de escucha directa
+        awakeUntil = Date.now() + 30000;
+        directSpeakMode = true;
+      }
+      if (wakeWordActive && micStream) {
+        if (isManualClick) {
+          setReactorState('listening', '🎙️ TE ESCUCHO AHORA MISMO, SEÑOR...');
+        }
+        return;
+      }
+
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioCtx.createMediaStreamSource(micStream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+
+        wakeWordActive = true;
+        btn.textContent = '🟢 HEY JARVIS: ON';
+        btn.classList.add('active');
+        setReactorState('listening', isManualClick ? '🎙️ TE ESCUCHO, SEÑOR...' : '🟢 ESCUCHA ACTIVA ("HEY JARVIS" / "OYE JARVIS")');
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+        vadInterval = setInterval(() => {
+          if (!wakeWordActive || !analyser) return;
+          // No grabar mientras Jarvis está hablando por altavoz para no escucharse a sí mismo
+          if (currentAudio && !currentAudio.paused) return;
+          if (isTranscribing) return;
+
+          analyser.getByteTimeDomainData(dataArray);
+          let sumSq = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            const norm = (dataArray[i] - 128) / 128.0;
+            sumSq += norm * norm;
+          }
+          const rms = Math.sqrt(sumSq / dataArray.length);
+          const now = Date.now();
+
+          if (rms > 0.022) {
+            lastVoiceTime = now;
+            if (!isRecordingUtterance) {
+              isRecordingUtterance = true;
+              speechStartTime = now;
+              recordedChunks = [];
+              try {
+                mediaRecorder = new MediaRecorder(micStream);
+                mediaRecorder.ondataavailable = (e) => {
+                  if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+                };
+                mediaRecorder.onstop = () => {
+                  const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                  recordedChunks = [];
+                  sendAudioChunkToTranscribe(blob);
+                };
+                mediaRecorder.start();
+                setReactorState('listening', '🎙️ CAPTANDO TU VOZ...');
+              } catch (err) {
+                isRecordingUtterance = false;
+              }
+            }
+          }
+
+          if (isRecordingUtterance) {
+            const silenceDuration = now - lastVoiceTime;
+            const totalDuration = now - speechStartTime;
+            if (silenceDuration > 720 || totalDuration > 7500) {
+              isRecordingUtterance = false;
+              try {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                  mediaRecorder.stop();
+                }
+              } catch (e) {}
+            }
+          }
+        }, 85);
+      } catch (err) {
+        btn.textContent = '🎤 HABLAR';
+        btn.classList.remove('active');
+        setReactorState('', 'PERMISO DE MICRÓFONO REQUERIDO');
+      }
+    }
+
+    function toggleContinuousListen() {
+      startWakeWordMicrophone(true);
+    }
+
+    document.getElementById('reactor').addEventListener('click', () => startWakeWordMicrophone(true));
     loadStatus();
+    // Iniciar escucha activa "Hey Jarvis" automáticamente al abrir la interfaz
+    setTimeout(() => startWakeWordMicrophone(false), 800);
 
     async function updateTelemetryHUD() {
       try {

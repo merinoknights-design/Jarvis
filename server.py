@@ -24,6 +24,14 @@ from cad_engine import (
     assemble_any_parts_in_solidedge,
 )
 from file_analyzer import analyze_any_file, UPLOAD_DIR
+from gemini_brain import (
+    get_gemini_api_key,
+    save_gemini_api_key,
+    ask_gemini_with_google_search,
+    multi_source_deep_search,
+    query_gemini_web_in_chrome,
+    transcribe_audio_bytes_to_spanish,
+)
 from git_sync import set_github_remote, push_update_to_github, pull_update_from_github
 from intent_engine import classify_user_intent
 from stark_protocols import (
@@ -206,9 +214,33 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
         os.startfile("https://www.youtube.com")
         return {"reply": "YouTube abierto, Señor.", "tool_used": "puppeteer"}
 
-    # 1. Llamado directo o saludos cortos
-    if user_msg.lower().strip() in ["jarvis", "hey jarvis", "oye jarvis", "estás ahí", "estas ahi"]:
-        return {"reply": "Sí, Señor. Dígame.", "tool_used": "memory"}
+    # 1. Llamado directo o saludos cortos (incluyendo activación por voz 'Hey Jarvis', 'Oye Jarvis', 'Jarvis')
+    if user_msg.lower().strip(" .,!¡?¿") in [
+        "jarvis", "hey jarvis", "oye jarvis", "hola jarvis", "ok jarvis",
+        "ey jarvis", "el jarvis", "yarvis", "hey yarvis", "oye yarvis",
+        "estás ahí", "estas ahi",
+    ]:
+        return {"reply": "Sí, Señor. Lo escucho, dígame qué necesita.", "tool_used": "memory"}
+
+    # Conexión de API Key de Gemini por comando de voz o texto (ej. "conecta gemini con AIzaSy...")
+    key_match = re.search(r"(AIza[0-9A-Za-z\-_]{30,})", user_msg)
+    if key_match:
+        save_gemini_api_key(key_match.group(1))
+        return {
+            "reply": "¡Excelente, Señor! He conectado su clave de Google Gemini Pro/Flash con Google Search Grounding como mi fuente principal de inteligencia y búsqueda.",
+            "tool_used": "brave-search",
+        }
+
+    # Consulta directa en Google Gemini Web (Chrome) si el usuario dice "pregúntale a Gemini..." o "abre Gemini y..."
+    if any(p in low for p in ["pregúntale a gemini", "preguntale a gemini", "pregunta en gemini", "busca en gemini", "consulta en gemini", "abre gemini y"]):
+        execute_smart_task(
+            "Consulta en Google Gemini (Chrome)",
+            lambda: query_gemini_web_in_chrome(cleaned),
+            tool_name="puppeteer",
+            force_background=force_bg,
+            notify_on_complete=True,
+        )
+        return {"reply": "Enseguida, Señor. Conectando con su sesión de Google Gemini en Chrome y enviando la consulta.", "tool_used": "puppeteer"}
 
     if low in ["hola", "buenas", "buenos dias", "buenos días", "buenas tardes", "buenas noches", "hey", "qué tal", "que tal"]:
         return {"reply": "¡Hola, Señor! Todo en línea. ¿Qué hacemos?", "tool_used": "memory"}
@@ -675,6 +707,7 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             "discord": ("Discord Web", "https://discord.com/app"),
             "github": ("GitHub", "https://github.com"),
             "chatgpt": ("ChatGPT", "https://chatgpt.com"),
+            "gemini": ("Google Gemini", "https://gemini.google.com/app"),
             " google": ("Google", "https://www.google.com"),
         }
         for key, (label, url) in chrome_web_apps.items():
@@ -823,6 +856,31 @@ async def serve_ui():
     return "<h1>UI file not found</h1>"
 
 
+@app.post("/api/transcribe")
+async def api_transcribe_voice(request: Request):
+    """
+    Transcribe audio del micrófono en español en ~0.3s para la escucha activa ('Hey Jarvis', 'Oye Jarvis', 'Jarvis').
+    Funciona en cualquier navegador (Edge, Chrome, etc.) sin depender de webkitSpeechRecognition.
+    """
+    audio_bytes = await request.body()
+    text = await asyncio.to_thread(transcribe_audio_bytes_to_spanish, audio_bytes)
+    return {"text": text}
+
+
+@app.get("/api/gemini/config")
+async def api_get_gemini_config():
+    key = get_gemini_api_key()
+    return {"connected": bool(key), "masked_key": (key[:8] + "..." + key[-4:]) if len(key) > 12 else ""}
+
+
+@app.post("/api/gemini/config")
+async def api_set_gemini_config(request: Request):
+    body = await request.json()
+    api_key = (body.get("api_key") or "").strip()
+    ok = save_gemini_api_key(api_key)
+    return {"connected": ok}
+
+
 @app.get("/api/telemetry")
 async def api_telemetry():
     """Telemetría en vivo para el HUD de J.A.R.V.I.S. (CPU, RAM, Reactor Arc / Batería)."""
@@ -833,9 +891,11 @@ async def api_telemetry():
 async def get_status():
     mcp_cfg = load_mcp_config().get("mcpServers", {})
     mcps = [{"name": k, "description": v.get("description", "MCP"), "ready": True} for k, v in mcp_cfg.items()]
+    gem_active = bool(get_gemini_api_key())
     return {
         "ollama_online": True,
-        "active_model": "JARVIS SENTIENT + BRAVE MCP + CAD 3D",
+        "gemini_connected": gem_active,
+        "active_model": "JARVIS + GEMINI SEARCH + CAD 3D" if gem_active else "JARVIS + DEEP SEARCH (WIKI/BRAVE) + CAD 3D",
         "mcps": mcps
     }
 
@@ -892,9 +952,7 @@ async def chat(request: Request):
         conversation_history.append({"role": "assistant", "content": instant["reply"]})
         return instant
 
-    # 2. CRITERIO PROPIO DE MEMORIA DE CONVERSACIÓN VS BÚSQUEDA WEB
-    # Solo buscar en internet si el usuario activó el botón WEB o si hace una pregunta real de información externa,
-    # NUNCA cuando está hablando con Jarvis sobre la conversación actual, tareas, errores o su pantalla.
+    # 2. CRITERIO PROPIO DE MEMORIA DE CONVERSACIÓN VS SUPER-BÚSQUEDA PROFUNDA (GEMINI + WIKIPEDIA ES + BRAVE)
     conversational_self_words = [
         "necesito que", "criterio", "memoria", "estamos preguntando", "hablando", "conversación", "conversacion",
         "no lo veo", "otra vez", "todavía", "todavia", "david", "whatsapp", "mensaje", "chat", "rectifica",
@@ -902,18 +960,35 @@ async def chat(request: Request):
     ]
     should_query_web = use_search or (
         not any(cw in low_msg for cw in conversational_self_words)
-        and any(
-            q in low_msg
-            for q in [
-                "qué es", "que es", "quién es", "quien es", "cuándo", "cuando", "dónde", "donde",
-                "cuánto", "cuanto", "noticias", "clima", "historia de", "busca en internet", "investiga",
-            ]
+        and (
+            any(
+                q in low_msg
+                for q in [
+                    "qué ", "que ", "quién", "quien", "cuándo", "cuando", "dónde", "donde",
+                    "cuánto", "cuanto", "cómo ", "como ", "por qué", "por que", "cuál", "cual",
+                    "noticias", "clima", "historia", "busca", "investiga", "explica", "explícame",
+                    "háblame", "hablame", "dime sobre", "información", "informacion", "precio", "último",
+                ]
+            )
+            or len(user_msg.split()) >= 4
         )
     )
 
-    model_online = await detect_best_model()
-    web_items = await brave_search_detailed(user_msg) if should_query_web else []
-    web_context = "\n".join([f"- {i['title']}: {i['description']}" for i in web_items[:3]])
+    mcp_cfg = load_mcp_config().get("mcpServers", {})
+    brave_key = mcp_cfg.get("brave-search", {}).get("env", {}).get("BRAVE_API_KEY", "") or DEFAULT_BRAVE_KEY
+    if "REEMPLAZA" in brave_key:
+        brave_key = DEFAULT_BRAVE_KEY
+
+    web_items = await multi_source_deep_search(user_msg, brave_key) if should_query_web else []
+    web_context = "\n".join([f"- {i['title']}: {i['description']}" for i in web_items[:5]])
+
+    stark_mem = load_stark_memory()
+    stark_notes = stark_mem.get("notes", [])
+    notes_context = (
+        "\n[Bitácora Stark del usuario: " + "; ".join(n["note"] for n in stark_notes[-5:]) + "]"
+        if stark_notes
+        else ""
+    )
 
     action_memory_note = (
         f"\n[Memoria interna de tu última acción en el PC: app={LAST_ACTION_STATE.get('active_app')}, "
@@ -924,14 +999,24 @@ async def chat(request: Request):
         if LAST_ACTION_STATE.get("active_app")
         else ""
     )
+    extra_ctx = (
+        action_memory_note
+        + notes_context
+        + (f"\n\n[Fuentes verificadas en tiempo real (Wikipedia ES + Brave Web)]:\n{web_context}" if web_context else "")
+    )
 
+    # 2.1 Intentar primero con Google Gemini + Google Search Grounding si el usuario configuró su clave Gemini
+    gemini_reply = await ask_gemini_with_google_search(user_msg, SYSTEM_PROMPT, conversation_history, extra_ctx)
+    if gemini_reply:
+        conversation_history.append({"role": "user", "content": user_msg})
+        conversation_history.append({"role": "assistant", "content": gemini_reply})
+        return {"reply": gemini_reply, "tool_used": "brave-search" if should_query_web else "memory"}
+
+    # 2.2 Cerebro local Ollama enriquecido con Wikipedia ES + Brave Search
+    model_online = await detect_best_model()
     if model_online:
         try:
-            prompt_enriched = (
-                user_msg
-                + action_memory_note
-                + (f"\n\n[Datos de apoyo en tiempo real]:\n{web_context}" if web_context else "")
-            )
+            prompt_enriched = user_msg + extra_ctx
             conversation_history.append({"role": "user", "content": prompt_enriched})
             messages_to_send = [conversation_history[0]] + conversation_history[-8:]
             async with httpx.AsyncClient(timeout=12.0) as client:
@@ -942,7 +1027,7 @@ async def chat(request: Request):
                         "messages": messages_to_send,
                         "stream": False,
                         "keep_alive": -1,
-                        "options": {"num_predict": 140, "temperature": 0.6}
+                        "options": {"num_predict": 180, "temperature": 0.55}
                     }
                 )
                 if resp.status_code == 200:

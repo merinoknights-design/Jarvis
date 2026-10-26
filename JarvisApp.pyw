@@ -91,14 +91,16 @@ def launch_app_window():
         Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
     ]
 
-    for browser in edge_paths + chrome_paths:
+    for browser in chrome_paths + edge_paths:
         if browser.exists():
             subprocess.Popen([
                 str(browser),
                 f"--app={APP_URL}",
                 "--window-size=1280,800",
                 "--window-position=120,80",
-                "--title=J.A.R.V.I.S."
+                "--title=J.A.R.V.I.S.",
+                "--use-fake-ui-for-media-stream",
+                "--autoplay-policy=no-user-gesture-required",
             ])
             return
 

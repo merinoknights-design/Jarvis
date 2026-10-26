@@ -15,3 +15,4 @@ pyautogui
 pywinauto
 pyperclip
 edge-tts
+SpeechRecognition
