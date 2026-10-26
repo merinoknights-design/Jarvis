@@ -8,8 +8,8 @@ echo  ║     Conectado a Actualizaciones Automaticas por GitHub   ║
 echo  ╚══════════════════════════════════════════════════════════╝
 echo.
 
-REM Reemplaza esta URL por la de tu repositorio de GitHub cuando lo crees:
-set "REPO_URL=https://github.com/TU_USUARIO/Jarvis.git"
+REM URL oficial de tu repositorio de GitHub:
+set "REPO_URL=https://github.com/merinoknights-design/Jarvis.git"
 
 echo [1/5] Verificando Git y Ollama...
 where git >nul 2>&1 || winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
