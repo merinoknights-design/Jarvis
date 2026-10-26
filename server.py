@@ -24,6 +24,7 @@ from cad_engine import (
     execute_universal_cad_plan,
     assemble_any_parts_in_solidedge,
     build_pieza_mecanica_piston,
+    generate_full_piston_engine_project,
 )
 from file_analyzer import analyze_any_file, extract_cad_plan_from_file, UPLOAD_DIR
 from gemini_brain import (
@@ -225,6 +226,23 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             f"Los sólidos 3D están completamente construidos en el PathFinder y guardados en su carpeta de proyectos."
         )
         return {"reply": reply, "tool_used": "filesystem"}
+
+    # Ejecución del Parcial / Motor de Pistón Completo (3 piezas + ensamble + ZIP)
+    if any(k in low for k in ["parcial", "todas las piezas", "motor de piston", "motor de pistón", "ensamble del motor"]) or (
+        "piston" in low and "biela" in low
+    ) or ("biela parte superior" in low or "biela parte inferior" in low):
+        try:
+            suite = generate_full_piston_engine_project()
+            lines = [f"• {chk['name']}: {Path(chk['file']).name} (Verificado: {'SÍ' if chk['verified'] else 'NO'})" for chk in suite.get("checklist", [])]
+            summary = "\n".join(lines)
+            reply = (
+                f"¡Proyecto Completo del Motor de Pistón modelado y ensamblado con éxito en Solid Edge 2026, Señor!\n\n"
+                f"{summary}\n\n"
+                f"Paquete comprimido generado en: {suite.get('zip_package', '')}"
+            )
+            return {"reply": reply, "tool_used": "filesystem"}
+        except Exception as e:
+            return {"reply": f"Error al generar el parcial completo: {e}", "tool_used": "filesystem"}
 
     # Ejecución inmediata si el usuario envía la Guía de Modelamiento 3D o solicita directamente la pieza mecánica
     if any(k in low for k in ["guía de modelamiento", "guia de modelamiento", "pieza_mecanica", "pieza mecanica"]) or (

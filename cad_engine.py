@@ -755,6 +755,12 @@ def build_pieza_mecanica_piston(save_path: Optional[Path] = None) -> Dict[str, A
     return build_piston_perfect(save_path)
 
 
+def generate_full_piston_engine_project(output_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Genera el proyecto completo de parcial: 3 piezas modeladas, ensamble mecánico y paquete ZIP."""
+    from build_piston_engine_project import run_full_exam_suite
+    return run_full_exam_suite(output_dir)
+
+
 def parse_natural_language_or_drawing_to_cad_plan(text: str) -> Dict[str, Any]:
     low = text.lower()
 
