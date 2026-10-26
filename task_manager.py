@@ -13,18 +13,25 @@ def has_active_tasks() -> bool:
         return len(ACTIVE_TASKS) > 0
 
 
-def execute_smart_task(title: str, worker_fn: Callable[[], str], tool_name: str = "filesystem", force_background: bool = False) -> Dict[str, Any]:
+def execute_smart_task(
+    title: str,
+    worker_fn: Callable[[], str],
+    tool_name: str = "filesystem",
+    force_background: bool = False,
+    notify_on_complete: bool = False,
+) -> Dict[str, Any]:
     """
     Si NO hay otra tarea corriendo y es 1 sola orden:
-      - La lanza silenciosamente sin decir 'en segundo plano' ni enviar doble mensaje después.
-    Si YA hay una tarea corriendo (2 o más tareas simultáneas) o el usuario pidió varias tareas a la vez:
+      - La lanza directamente sin decir 'en segundo plano'.
+      - Si notify_on_complete=True (flujos multi-paso como redactar borrador, comentar en YouTube, mandar WhatsApp),
+        avisa al usuario apenas termina todos los pasos ("Ya terminé la acción, Señor").
+    Si YA hay una tarea corriendo (2 o más tareas simultáneas) o force_background=True:
       - La corre en cola en segundo plano y avisa al terminar.
     """
     already_busy = has_active_tasks() or force_background
     task_id = str(uuid.uuid4())[:8]
 
-    if not already_busy:
-        # 1 sola tarea: ejecutar sin hablar de "segundo plano" ni mandar notificación repetida luego
+    if not already_busy and not notify_on_complete:
         with _lock:
             ACTIVE_TASKS[task_id] = {"id": task_id, "title": title, "status": "running", "tool": tool_name}
 
@@ -41,7 +48,6 @@ def execute_smart_task(title: str, worker_fn: Callable[[], str], tool_name: str 
             "task_id": task_id
         }
 
-    # 2 o más tareas al mismo tiempo: encolar en segundo plano y avisar al terminar
     with _lock:
         ACTIVE_TASKS[task_id] = {"id": task_id, "title": title, "status": "running", "tool": tool_name}
 
@@ -53,8 +59,8 @@ def execute_smart_task(title: str, worker_fn: Callable[[], str], tool_name: str 
                 COMPLETED_NOTIFICATIONS.append({
                     "id": task_id,
                     "title": title,
-                    "message": f"🔔 Listo, Señor: {result_message}",
-                    "voice_summary": f"Listo, Señor. Terminé {title}.",
+                    "message": f"✅ {result_message}",
+                    "voice_summary": result_message if len(str(result_message)) < 140 else f"Ya terminé la acción de {title}, Señor.",
                     "tool_used": tool_name,
                     "status": "done"
                 })
@@ -72,7 +78,7 @@ def execute_smart_task(title: str, worker_fn: Callable[[], str], tool_name: str 
 
     threading.Thread(target=_notifying_worker, daemon=True).start()
     return {
-        "queued_in_background": True,
+        "queued_in_background": already_busy,
         "task_id": task_id
     }
 

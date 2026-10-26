@@ -27,6 +27,12 @@ from file_analyzer import analyze_any_file, UPLOAD_DIR
 from git_sync import set_github_remote, push_update_to_github, pull_update_from_github
 from intent_engine import classify_user_intent
 from task_manager import execute_smart_task, pop_completed_notifications
+from web_workflows import (
+    workflow_gmail_compose_or_send,
+    workflow_whatsapp_send_message,
+    workflow_youtube_watch_and_comment,
+    workflow_generic_webapp_multistep,
+)
 from ui_controller import (
     play_song_on_spotify_autonomous,
     play_video_on_youtube_autonomous,
@@ -276,6 +282,75 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             if info["queued_in_background"]:
                 return {"reply": "En segundo plano: modelando pieza en Solid Edge. Le aviso al terminar, Señor.", "tool_used": "filesystem"}
             return {"reply": "Modelando la pieza en Modo Ordenado en Solid Edge 2026, Señor.", "tool_used": "filesystem"}
+
+    # 6.0 FLUJOS AUTÓNOMOS COMPLETOS EN APLICACIONES WEB (GMAIL, WHATSAPP, YOUTUBE, CANVA, DRIVE, OUTLOOK, DISCORD, INSTAGRAM, NETFLIX, ETC.)
+    # Simplifica procesos: si el usuario pide abrir una app y hacer una acción (redactar borrador, mandar mensaje, comentar video, buscar, dar clic),
+    # ejecuta todo el flujo de principio a fin sin partirlo y avisa apenas termina la acción.
+    if any(w in low for w in ["gmail", "correo", "borrador", "email", "e-mail", "manda un mail", "envía un mail"]):
+        if any(v in low for v in ["borrador", "redacta", "redactar", "manda", "mandar", "envía", "envia", "enviar", "escribe", "escribir", "prepara"]):
+            execute_smart_task(
+                "Flujo de Correo en Gmail",
+                lambda: workflow_gmail_compose_or_send(cleaned),
+                tool_name="puppeteer",
+                force_background=force_bg,
+                notify_on_complete=True,
+            )
+            return {"reply": "Enseguida, Señor. Abriendo Gmail y redactando el correo; le aviso apenas quede listo.", "tool_used": "puppeteer"}
+        return {"reply": open_web_app_in_chrome_with_login_check("Gmail", "https://mail.google.com"), "tool_used": "puppeteer"}
+
+    if "whatsapp" in low and any(v in low for v in ["manda", "mandar", "envía", "envia", "enviar", "mensaje", "escribe", "escríbele", "escribele", "dile", "diciendo", "perfil", "contacto", "chat"]):
+        execute_smart_task(
+            "Mensaje de WhatsApp",
+            lambda: workflow_whatsapp_send_message(cleaned),
+            tool_name="puppeteer",
+            force_background=force_bg,
+            notify_on_complete=True,
+        )
+        return {"reply": "Enseguida, Señor. Abriendo WhatsApp, entrando al perfil del contacto y enviando su mensaje.", "tool_used": "puppeteer"}
+
+    if ("youtube" in low or "video" in low) and any(v in low for v in ["comenta", "comentario", "comentar"]):
+        execute_smart_task(
+            "Ver y Comentar en YouTube",
+            lambda: workflow_youtube_watch_and_comment(cleaned),
+            tool_name="puppeteer",
+            force_background=force_bg,
+            notify_on_complete=True,
+        )
+        return {"reply": "Enseguida, Señor. Abriendo el video en YouTube y publicando su comentario.", "tool_used": "puppeteer"}
+
+    web_workflow_apps = {
+        "outlook": ("Outlook", "https://outlook.live.com"),
+        "hotmail": ("Outlook", "https://outlook.live.com"),
+        "canva": ("Canva", "https://www.canva.com"),
+        "drive": ("Google Drive", "https://drive.google.com"),
+        "google drive": ("Google Drive", "https://drive.google.com"),
+        "docs": ("Google Docs", "https://docs.google.com"),
+        "instagram": ("Instagram", "https://www.instagram.com"),
+        "facebook": ("Facebook", "https://www.facebook.com"),
+        "tiktok": ("TikTok", "https://www.tiktok.com"),
+        "netflix": ("Netflix", "https://www.netflix.com"),
+        "discord": ("Discord", "https://discord.com/app"),
+        "github": ("GitHub", "https://github.com"),
+        "chatgpt": ("ChatGPT", "https://chatgpt.com"),
+    }
+    for app_key, (app_label, app_url) in web_workflow_apps.items():
+        if app_key in low and any(
+            act in low
+            for act in [
+                "borrador", "redacta", "redactar", "busca", "buscar", "encuentra",
+                "haz clic", "da clic", "dale clic", "oprime", "selecciona",
+                "escribe", "escribir", "comenta", "comentar", "manda", "envía", "envia",
+                "pon ", "reproduce ", "scroll", "baja", "sube",
+            ]
+        ):
+            execute_smart_task(
+                f"Flujo en {app_label}",
+                lambda l=app_label, u=app_url: workflow_generic_webapp_multistep(l, u, cleaned),
+                tool_name="puppeteer",
+                force_background=force_bg,
+                notify_on_complete=True,
+            )
+            return {"reply": f"Enseguida, Señor. Abriendo {app_label} y ejecutando la acción completa.", "tool_used": "puppeteer"}
 
     # 6. CONTROL DE INTERFAZ GRÁFICA (CLICS POR VISIÓN OCR, SCROLL, TECLADO, COMENTARIOS Y MULTIMEDIA)
     # 6.1 Hacer clic sobre cualquier palabra o botón en pantalla usando Visión OCR
@@ -590,14 +665,26 @@ async def chat(request: Request):
     if not user_msg:
         return JSONResponse({"error": "Mensaje vacío"}, status_code=400)
 
-    # Detectar si el usuario pidió 2 o más tareas en la misma orden (ej: "pon Ansiedad y crea una brida en Solid Edge")
-    sub_orders = [
-        s.strip() for s in re.split(
-            r"\s+(?:y\s+adem[aá]s|y\s+luego|y\s+tambi[eé]n|;\s*|\s+y\s+(?=(?:pon|reproduce|abre|crea|modela|haz|busca|escribe)))\s*",
-            user_msg,
-            flags=re.IGNORECASE
-        ) if s.strip()
-    ]
+    # Si la orden pertenece a un flujo unificado de una misma aplicación web (ej. "abre Gmail y redacta un borrador",
+    # "abre WhatsApp y manda un mensaje", "abre YouTube, ve al video y escribe un comentario", "abre Canva y busca X"),
+    # NO partirla en pedazos para que el flujo autónomo completo haga todos los pasos seguidos:
+    low_msg = user_msg.lower()
+    is_single_unified_workflow = (
+        any(w in low_msg for w in ["gmail", "correo", "borrador", "whatsapp", "comenta", "comentario", "outlook", "canva", "drive", "instagram", "netflix", "discord"])
+        and not any(sep in low_msg for sep in [" y además ", " y ademas ", " y también ", " y tambien ", ";"])
+        and not ("spotify" in low_msg and "solid edge" in low_msg)
+    )
+
+    if is_single_unified_workflow:
+        sub_orders = [user_msg]
+    else:
+        sub_orders = [
+            s.strip() for s in re.split(
+                r"\s+(?:y\s+adem[aá]s|y\s+luego|y\s+tambi[eé]n|;\s*|\s+y\s+(?=(?:pon|reproduce|abre|crea|modela)))\s*",
+                user_msg,
+                flags=re.IGNORECASE
+            ) if s.strip()
+        ]
 
     if len(sub_orders) >= 2 and not use_search:
         replies = []
