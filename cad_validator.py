@@ -140,11 +140,6 @@ def capture_and_export_solid_edge_model(doc, save_base_path: Path) -> Dict[str, 
     # 1. Guardar documento nativo .par
     par_path = save_base_path.with_suffix(".par")
     try:
-        if par_path.exists():
-            try:
-                par_path.unlink()
-            except Exception:
-                par_path = save_base_path.parent / f"{save_base_path.stem}_{int(time.time())}.par"
         doc.SaveAs(str(par_path))
         results["par_file"] = str(par_path)
     except Exception as e:
@@ -177,10 +172,10 @@ def capture_and_export_solid_edge_model(doc, save_base_path: Path) -> Dict[str, 
     except Exception:
         pass
 
-    # 4. Exportar .step neutro
+    # 4. Exportar .step neutro mediante SaveCopyAs para NO alterar el documento abierto
     step_path = save_base_path.with_suffix(".step")
     try:
-        doc.SaveAs(str(step_path))
+        doc.SaveCopyAs(str(step_path))
         if step_path.exists() and step_path.stat().st_size > 100:
             results["step_file"] = str(step_path)
     except Exception:

@@ -36,10 +36,14 @@ from cad_atomic_lib import (
     igLeft,
     igSymmetric
 )
-from piston_probe_validator import test_probe_points_on_stl, get_standard_piston_probes
+from final_state_manager import (
+    CERRAR_AL_TERMINAR,
+    apply_model_presentation,
+    bring_solidedge_to_foreground
+)
 
 
-def build_piston_perfect(save_path: Path) -> Dict[str, Any]:
+def build_piston_perfect(save_path: Path, cerrar_al_terminar: bool = CERRAR_AL_TERMINAR) -> Dict[str, Any]:
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     tree_ops: List[str] = []
@@ -183,45 +187,40 @@ def build_piston_perfect(save_path: Path) -> Dict[str, Any]:
     add_extruded_cutout(model, prof7_l, 0.350, igRight, igSymmetric)
     tree_ops.append("7. Vaciado_05_Cortes_Faldon: Recortes laterales cóncavos con arcos R100")
 
-    # 8. Limpieza final: ocultar planos de referencia y bocetos
-    for i in range(1, ref_planes.Count + 1):
-        try:
-            ref_planes.Item(i).Visible = False
-        except Exception:
-            pass
+    # 8. Limpieza final y presentación formal del modelo
+    apply_model_presentation(doc, is_active=True)
 
-    for i in range(1, ps.Count + 1):
-        try:
-            p_set = ps.Item(i)
-            for j in range(1, p_set.Profiles.Count + 1):
-                p_set.Profiles.Item(j).Visible = False
-        except Exception:
-            pass
-
-    # Orientar en Isométrica y ajustar zoom
-    try:
-        win = doc.Windows.Item(1)
-        win.View.Fit()
-        win.View.Orientation = 1  # Isométrica
-    except Exception:
-        pass
-
-    # Guardar .par, copia .stl e imagen de inspección
+    # Guardar documento principal y generar copias neutras sin cambiar el documento activo
     out_par = save_path
     out_stl = save_path.with_suffix(".stl")
     out_img = save_path.with_suffix(".png")
 
     doc.SaveAs(str(out_par))
-    doc.SaveCopyAs(str(out_stl))
     try:
-        win.View.SaveAsImage(str(out_img), 1920, 1080)
+        doc.SaveCopyAs(str(out_stl))
     except Exception:
         pass
 
-    doc.Close(True)
+    try:
+        if doc.Windows.Count > 0:
+            doc.Windows.Item(1).View.SaveAsImage(str(out_img), 1920, 1080)
+    except Exception:
+        pass
 
-    # 9. Validación automática por puntos de sonda
+    # 9. Validación automática por puntos de sonda sobre la copia STL exportada
     probe_results = test_probe_points_on_stl(out_stl, get_standard_piston_probes())
+
+    # Condicionar el cierre únicamente a la bandera central cerrar_al_terminar
+    if cerrar_al_terminar:
+        doc.Close(True)
+    else:
+        # Asegurar que el documento permanezca visible y activo
+        try:
+            app.DisplayAlerts = True
+            app.StartCommand(2)  # seCmdSelect
+            bring_solidedge_to_foreground(app)
+        except Exception:
+            pass
 
     return {
         "file": str(out_par),

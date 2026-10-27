@@ -27,7 +27,7 @@ HEALTHY_STATUS_CODES = {0, 1, 1216476310, 1216476311}
 
 
 def connect_or_launch_solidedge():
-    """Conecta con la instancia activa de Solid Edge 2026 o inicia una nueva en Modo Ordenado."""
+    """Conecta con la instancia activa de Solid Edge 2026 o inicia una nueva en Modo Ordenado sin cerrar procesos innecesariamente."""
     pythoncom.CoInitialize()
     app = None
     try:
@@ -37,16 +37,16 @@ def connect_or_launch_solidedge():
         app = None
 
     if app is None:
-        # Asegurar que no queden procesos zombie de Edge.exe bloqueando COM
-        import subprocess
-        try:
-            subprocess.run(["taskkill", "/f", "/im", "Edge.exe"], capture_output=True)
-            time.sleep(1.0)
-        except Exception:
-            pass
         try:
             app = win32com.client.Dispatch("SolidEdge.Application")
         except Exception:
+            # Solo en caso de error crítico de conexión COM se reinicia el proceso
+            import subprocess
+            try:
+                subprocess.run(["taskkill", "/f", "/im", "Edge.exe"], capture_output=True)
+                time.sleep(1.0)
+            except Exception:
+                pass
             time.sleep(2.0)
             app = win32com.client.Dispatch("SolidEdge.Application")
 

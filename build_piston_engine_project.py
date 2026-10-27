@@ -35,6 +35,12 @@ from cad_edge_selector import (
     filter_top_rim_edges_for_chamfer,
     filter_inner_cavity_edges
 )
+from final_state_manager import (
+    CERRAR_AL_TERMINAR,
+    finalize_and_verify_open_state,
+    apply_model_presentation,
+    bring_solidedge_to_foreground
+)
 
 
 # =============================================================================
@@ -543,6 +549,23 @@ def run_full_exam_suite(output_dir: Optional[Path] = None) -> Dict[str, Any]:
         "verified": zip_out.exists(),
         "notes": f"Archivo comprimido listo para entrega ({round(zip_out.stat().st_size/1024, 1)} KB)."
     })
+
+    print("\n>>> GARANTIZANDO ESTADO FINAL: MODELOS ABIERTOS Y VISIBLES EN PANTALLA...")
+    app = get_or_start_solidedge()
+    expected_models = [
+        Path(res_piston["file"]),
+        Path(res_biela_sup["file"]),
+        Path(res_biela_inf["file"]),
+        Path(res_asm["assembly_file"])
+    ]
+    final_state = finalize_and_verify_open_state(
+        app,
+        expected_doc_paths=expected_models,
+        active_doc_path=Path(res_asm["assembly_file"]),
+        cerrar_al_terminar=CERRAR_AL_TERMINAR
+    )
+    suite_results["final_state"] = final_state
+    print(f"Estado final verificado: {final_state['open_documents_count']} documentos abiertos. Activo: {final_state['active_document']}")
 
     return suite_results
 
