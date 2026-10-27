@@ -37,10 +37,17 @@ def connect_or_launch_solidedge():
         app = None
 
     if app is None:
+        # Asegurar que no queden procesos zombie de Edge.exe bloqueando COM
+        import subprocess
+        try:
+            subprocess.run(["taskkill", "/f", "/im", "Edge.exe"], capture_output=True)
+            time.sleep(1.0)
+        except Exception:
+            pass
         try:
             app = win32com.client.Dispatch("SolidEdge.Application")
         except Exception:
-            time.sleep(1.0)
+            time.sleep(2.0)
             app = win32com.client.Dispatch("SolidEdge.Application")
 
     app.Visible = True
@@ -126,9 +133,18 @@ def create_base_protrusion(doc, prof, depth: float, side: int = igRight) -> Any:
     return model
 
 
-def add_subsequent_protrusion(model, prof, depth: float, side: int = igRight, extent_side: int = igRight) -> Any:
-    """Añade una protrusión extruida adicional a un modelo 3D existente."""
+def add_subsequent_protrusion(doc_or_model, prof, depth: float, side: int = igRight, extent_side: int = igRight) -> Any:
+    """Añade una protrusión extruida adicional a un modelo 3D existente de forma robusta."""
     end_and_hide_profile(prof)
+    try:
+        # doc.Models.AddFiniteExtrudedProtrusion añade features de adición con status saludable 1216476310
+        doc = getattr(doc_or_model, "Parent", doc_or_model)
+        models = getattr(doc, "Models", None)
+        if models is not None:
+            return models.AddFiniteExtrudedProtrusion(1, [prof], side if side == igSymmetric else extent_side, depth)
+    except Exception:
+        pass
+    model = doc_or_model if hasattr(doc_or_model, "ExtrudedProtrusions") else doc_or_model.Models.Item(1)
     feat = model.ExtrudedProtrusions.AddFinite(prof, side, extent_side, depth)
     return feat
 

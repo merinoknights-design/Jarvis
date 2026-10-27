@@ -43,14 +43,19 @@ def get_or_start_solidedge():
         app = None
 
     if app is None:
+        import subprocess
+        try:
+            subprocess.run(["taskkill", "/f", "/im", "Edge.exe"], capture_output=True)
+            import time
+            time.sleep(1.0)
+        except Exception:
+            pass
         try:
             app = win32com.client.Dispatch("SolidEdge.Application")
         except Exception:
-            # Reintento tras breve pausa si había procesos limpiándose
             import time
-            time.sleep(1.0)
+            time.sleep(2.0)
             app = win32com.client.Dispatch("SolidEdge.Application")
-
     app.Visible = True
     app.DisplayAlerts = False
     # Configurar Solid Edge globalmente para que cree documentos nuevos SIEMPRE en Modo Ordenado (2)
