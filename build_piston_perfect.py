@@ -29,6 +29,8 @@ from cad_atomic_lib import (
     create_part_doc,
     add_sketch_profile,
     add_line,
+    add_arc_by_center,
+    add_arc_by_start_along_end,
     close_profile_keypoints,
     add_extruded_cutout,
     create_base_protrusion,
@@ -41,6 +43,8 @@ from final_state_manager import (
     apply_model_presentation,
     bring_solidedge_to_foreground
 )
+from surface_cleanliness_auditor import audit_model_surfaces
+from piston_probe_validator import test_probe_points_on_stl, get_standard_piston_probes
 
 
 def build_piston_perfect(save_path: Path, cerrar_al_terminar: bool = CERRAR_AL_TERMINAR) -> Dict[str, Any]:
@@ -103,24 +107,17 @@ def build_piston_perfect(save_path: Path, cerrar_al_terminar: bool = CERRAR_AL_T
     tree_ops.append("3. Vaciado_02_Ranuras_Segmentos: 3 ranuras anulares 7.5mm prof. x 5mm ancho")
 
     # 4. Bloque simétrico de columnas de patas en plano YZ (ancho 180mm en X, hasta Z = -205mm)
+    # Contorno continuo en U: dos rectas verticales tangentes unidas por un semicírculo verdadero R45
     ps4, prof4 = add_sketch_profile(doc, 2, "Boceto_04_Columnas_Patas")
-    lines4 = []
-    lines4.append(add_line(prof4, 0.045, -0.160, 0.045, -0.020))
-    lines4.append(add_line(prof4, 0.045, -0.020, -0.045, -0.020))
-    lines4.append(add_line(prof4, -0.045, -0.020, -0.045, -0.160))
-    n_pts_pata = 12
-    curr_y, curr_z = -0.045, -0.160
-    for i in range(1, n_pts_pata + 1):
-        th = math.pi - (i / n_pts_pata) * math.pi
-        ny = 0.045 * math.cos(th)
-        nz = -0.160 - 0.045 * math.sin(th)
-        lines4.append(add_line(prof4, curr_y, curr_z, ny, nz))
-        curr_y, curr_z = ny, nz
-    close_profile_keypoints(prof4, lines4)
+    l4_top = add_line(prof4, 0.045, -0.020, -0.045, -0.020)
+    l4_left = add_line(prof4, -0.045, -0.020, -0.045, -0.160)
+    arc4 = add_arc_by_center(prof4, 0.0, -0.160, -0.045, -0.160, 0.045, -0.160)
+    l4_right = add_line(prof4, 0.045, -0.160, 0.045, -0.020)
+    close_profile_keypoints(prof4, [l4_top, l4_left, arc4, l4_right])
     prof4.End(0)
     prof4.Visible = False
     doc.Models.AddFiniteExtrudedProtrusion(1, [prof4], igSymmetric, 0.180)
-    tree_ops.append("4. Protrusion_02_Columnas_Patas: Bloque 180mm en X, ancho 90mm en Y, contorno R45 hasta Z = -205mm")
+    tree_ops.append("4. Protrusion_02_Columnas_Patas: Bloque 180mm en X, contorno en U con arco verdadero R45 hasta Z = -205mm")
 
     # 5. Vaciado del hueco central de 100mm entre patas
     ps5, prof5 = add_sketch_profile(doc, 3, "Boceto_05_Hueco_Central")
@@ -140,27 +137,23 @@ def build_piston_perfect(save_path: Path, cerrar_al_terminar: bool = CERRAR_AL_T
     model.ExtrudedCutouts.AddFinite(prof6, igRight, igSymmetric, 0.250)
     tree_ops.append("6. Vaciado_04_Alojamiento_Pasador: Taladro pasante R25 (diam 50mm) en Z = -160mm")
 
-    # 7. Cortes laterales del faldón con arcos cóncavos R100
+    # 7. Cortes laterales del faldón con arcos cóncavos R100 verdaderos (sin aproximaciones poligonales)
     # Lado derecho
     ps7_r, prof7_r = add_sketch_profile(doc, 3, "Boceto_07_Corte_Faldon_Der")
     lines_r = []
     lines_r.append(add_line(prof7_r, 0.090, -0.190, 0.160, -0.190))
     lines_r.append(add_line(prof7_r, 0.160, -0.190, 0.160, -0.080))
     lines_r.append(add_line(prof7_r, 0.160, -0.080, 0.150, -0.080))
-    cx_r, cz_r, r = 0.190, -0.1717, 0.100
+    cx_r, cz_r, r_scallop = 0.190, -0.1717, 0.100
     a1_r = math.atan2(-0.080 - cz_r, 0.150 - cx_r)
     a2_r = math.atan2(-0.175 - cz_r, 0.090 - cx_r)
     if a2_r < a1_r:
         a2_r += 2 * math.pi
-    n_pts = 10
-    curr_x, curr_z = 0.150, -0.080
-    for i in range(1, n_pts + 1):
-        t = i / n_pts
-        ang = a1_r + t * (a2_r - a1_r)
-        nx = cx_r + r * math.cos(ang)
-        nz = cz_r + r * math.sin(ang)
-        lines_r.append(add_line(prof7_r, curr_x, curr_z, nx, nz))
-        curr_x, curr_z = nx, nz
+    mid_ang_r = (a1_r + a2_r) / 2
+    mx_r = cx_r + r_scallop * math.cos(mid_ang_r)
+    mz_r = cz_r + r_scallop * math.sin(mid_ang_r)
+    arc_r = add_arc_by_start_along_end(prof7_r, 0.150, -0.080, mx_r, mz_r, 0.090, -0.175)
+    lines_r.append(arc_r)
     lines_r.append(add_line(prof7_r, 0.090, -0.175, 0.090, -0.190))
     close_profile_keypoints(prof7_r, lines_r)
     add_extruded_cutout(model, prof7_r, 0.350, igRight, igSymmetric)
@@ -172,22 +165,24 @@ def build_piston_perfect(save_path: Path, cerrar_al_terminar: bool = CERRAR_AL_T
     cx_l, cz_l = -0.190, -0.1717
     a1_l = math.atan2(-0.175 - cz_l, -0.090 - cx_l)
     a2_l = math.atan2(-0.080 - cz_l, -0.150 - cx_l)
-    curr_x, curr_z = -0.090, -0.175
-    for i in range(1, n_pts + 1):
-        t = i / n_pts
-        ang = a1_l + t * (a2_l - a1_l)
-        nx = cx_l + r * math.cos(ang)
-        nz = cz_l + r * math.sin(ang)
-        lines_l.append(add_line(prof7_l, curr_x, curr_z, nx, nz))
-        curr_x, curr_z = nx, nz
+    if a2_l < a1_l:
+        a2_l += 2 * math.pi
+    mid_ang_l = (a1_l + a2_l) / 2
+    mx_l = cx_l + r_scallop * math.cos(mid_ang_l)
+    mz_l = cz_l + r_scallop * math.sin(mid_ang_l)
+    arc_l = add_arc_by_start_along_end(prof7_l, -0.090, -0.175, mx_l, mz_l, -0.150, -0.080)
+    lines_l.append(arc_l)
     lines_l.append(add_line(prof7_l, -0.150, -0.080, -0.160, -0.080))
     lines_l.append(add_line(prof7_l, -0.160, -0.080, -0.160, -0.190))
     lines_l.append(add_line(prof7_l, -0.160, -0.190, -0.090, -0.190))
     close_profile_keypoints(prof7_l, lines_l)
     add_extruded_cutout(model, prof7_l, 0.350, igRight, igSymmetric)
-    tree_ops.append("7. Vaciado_05_Cortes_Faldon: Recortes laterales cóncavos con arcos R100")
+    tree_ops.append("7. Vaciado_05_Cortes_Faldon: Recortes laterales cóncavos con arcos verdaderos R100")
 
-    # 8. Limpieza final y presentación formal del modelo
+    # 8. Auditoría obligatoria de limpieza de superficies (cero facetas, caras cilíndricas verdaderas)
+    surface_audit = audit_model_surfaces(doc)
+
+    # 9. Limpieza final y presentación formal del modelo
     apply_model_presentation(doc, is_active=True)
 
     # Guardar documento principal y generar copias neutras sin cambiar el documento activo
@@ -207,7 +202,7 @@ def build_piston_perfect(save_path: Path, cerrar_al_terminar: bool = CERRAR_AL_T
     except Exception:
         pass
 
-    # 9. Validación automática por puntos de sonda sobre la copia STL exportada
+    # 10. Validación automática por puntos de sonda sobre la copia STL exportada
     probe_results = test_probe_points_on_stl(out_stl, get_standard_piston_probes())
 
     # Condicionar el cierre únicamente a la bandera central cerrar_al_terminar
@@ -222,13 +217,16 @@ def build_piston_perfect(save_path: Path, cerrar_al_terminar: bool = CERRAR_AL_T
         except Exception:
             pass
 
+    overall_success = probe_results.get("success", False) and surface_audit.get("cleanliness_pass", False)
+
     return {
         "file": str(out_par),
         "stl_file": str(out_stl),
         "image_file": str(out_img),
         "tree_operations": tree_ops,
         "probe_validation": probe_results,
-        "success": probe_results.get("success", False),
+        "surface_audit": surface_audit,
+        "success": overall_success,
         "passed_probes": f"{probe_results.get('passed_count', 0)}/{probe_results.get('total_count', 0)}"
     }
 

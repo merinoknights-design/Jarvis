@@ -26,6 +26,12 @@ from cad_engine import (
     igLeft,
     igSymmetric
 )
+from cad_atomic_lib import (
+    close_profile_keypoints,
+    add_arc_by_center,
+    add_arc_by_start_along_end
+)
+from surface_cleanliness_auditor import audit_model_surfaces, format_audit_report
 from cad_validator import (
     validate_part_model_health,
     capture_and_export_solid_edge_model
@@ -82,42 +88,22 @@ def build_02_biela_superior(output_dir: Path) -> Dict[str, Any]:
     # Centro cabeza cigüeñal en (0, 0), centro pie pistón en (0, 0.750)
     # Pie superior: arco R50 (x: -50 a +50 en y=0.750)
     # Orejas inferiores: ancho 300mm (x: -150 a +150 en y=0 a y=0.100)
-    # Dibujar silueta cerrada simétrica
-    p_pts = [
-        (-0.150, 0.0),      # Oreja inferior izq
-        (-0.150, 0.100),    # Esquina oreja izq
-        (-0.035, 0.200),    # Transición vástago izq
-        (-0.025, 0.700),    # Cuello vástago sup izq
-        (-0.050, 0.750),    # Ojo sup izq
-        (-0.035, 0.800),    # Cúpula ojo sup izq
-        (0.0, 0.800),       # Cima ojo sup centro
-        (0.035, 0.800),     # Cúpula ojo sup der
-        (0.050, 0.750),     # Ojo sup der
-        (0.025, 0.700),     # Cuello vástago sup der
-        (0.035, 0.200),     # Transición vástago der
-        (0.150, 0.100),     # Esquina oreja der
-        (0.150, 0.0),       # Oreja inferior der
-        (0.075, 0.0),       # Borde interior der
-    ]
+    # Silueta cerrada suave y continua: rectas tangentes con arco R50 superior y arco R75 inferior
+    l1 = lines1.AddBy2Points(-0.150, 0.0, -0.150, 0.100)
+    l2 = lines1.AddBy2Points(-0.150, 0.100, -0.035, 0.200)
+    l3 = lines1.AddBy2Points(-0.035, 0.200, -0.025, 0.700)
+    l4 = lines1.AddBy2Points(-0.025, 0.700, -0.050, 0.750)
+    arc_top = prof1.Arcs2d.AddByStartAlongEnd(-0.050, 0.750, 0.0, 0.800, 0.050, 0.750)
+    l5 = lines1.AddBy2Points(0.050, 0.750, 0.025, 0.700)
+    l6 = lines1.AddBy2Points(0.025, 0.700, 0.035, 0.200)
+    l7 = lines1.AddBy2Points(0.035, 0.200, 0.150, 0.100)
+    l8 = lines1.AddBy2Points(0.150, 0.100, 0.150, 0.0)
+    l9 = lines1.AddBy2Points(0.150, 0.0, 0.075, 0.0)
+    arc_crank = prof1.Arcs2d.AddByStartAlongEnd(0.075, 0.0, 0.0, 0.075, -0.075, 0.0)
+    l10 = lines1.AddBy2Points(-0.075, 0.0, -0.150, 0.0)
 
-    # Líneas de contorno
-    drawn_lines = []
-    for i in range(len(p_pts) - 1):
-        l = lines1.AddBy2Points(p_pts[i][0], p_pts[i][1], p_pts[i+1][0], p_pts[i+1][1])
-        drawn_lines.append(l)
-
-    # Semicírculo interior de la cabeza (R75 de x=0.075 a x=-0.075 con centro en 0,0)
-    arc_crank = prof1.Arcs2d.AddByCenterStartEnd(0.0, 0.0, 0.075, 0.0, -0.075, 0.0)
-    drawn_lines.append(arc_crank)
-
-    # Cerrar de (-0.075, 0.0) a (-0.150, 0.0)
-    l_close = lines1.AddBy2Points(-0.075, 0.0, -0.150, 0.0)
-    drawn_lines.append(l_close)
-
-    # Relaciones de coincidencia consecutivas
-    for i in range(len(drawn_lines) - 1):
-        rels1.AddKeypoint(drawn_lines[i], 1, drawn_lines[i+1], 0)
-    rels1.AddKeypoint(drawn_lines[-1], 1, drawn_lines[0], 0)
+    drawn_lines = [l1, l2, l3, l4, arc_top, l5, l6, l7, l8, l9, arc_crank, l10]
+    close_profile_keypoints(prof1, drawn_lines)
 
     prof1.End(0)
     prof1.Visible = False
@@ -244,6 +230,7 @@ def build_02_biela_superior(output_dir: Path) -> Dict[str, Any]:
         tree_ops.append(f"6. Redondeos aviso: {e}")
 
     health = validate_part_model_health(doc)
+    surface_audit = audit_model_surfaces(doc)
     exports = capture_and_export_solid_edge_model(doc, save_path)
 
     return {
@@ -252,6 +239,7 @@ def build_02_biela_superior(output_dir: Path) -> Dict[str, Any]:
         "step_file": exports.get("step_file"),
         "inspection_image": exports.get("inspection_image"),
         "health": health,
+        "surface_audit": surface_audit,
         "tree_operations": tree_ops
     }
 
@@ -282,20 +270,10 @@ def build_03_biela_inferior(output_dir: Path) -> Dict[str, Any]:
     rels1 = prof1.Relations2d
 
     # Cara de partición plana en Y = 0 (de x=-0.150 a x=+0.150)
-    # Semicírculo interior R75 hacia Y negativo: centro (0, 0)
+    # Semicírculo interior R75 hacia Y negativo con arco verdadero Arcs2d
     # Esquinas inferiores con chaflán 40x45° en (-150, -110) y (+150, -110)
-    # Perfil cerrado:
     l_top_izq = lines1.AddBy2Points(-0.150, 0.0, -0.075, 0.0)
-    arc_lines = []
-    n_pts_arc = 12
-    curr_x, curr_y = -0.075, 0.0
-    for i in range(1, n_pts_arc + 1):
-        th = math.pi - (i / n_pts_arc) * math.pi
-        nx = 0.075 * math.cos(th)
-        ny = -0.075 * math.sin(th)
-        arc_lines.append(lines1.AddBy2Points(curr_x, curr_y, nx, ny))
-        curr_x, curr_y = nx, ny
-
+    arc_inner = prof1.Arcs2d.AddByCenterStartEnd(0.0, 0.0, -0.075, 0.0, 0.075, 0.0)
     l_top_der = lines1.AddBy2Points(0.075, 0.0, 0.150, 0.0)
     l_lat_der = lines1.AddBy2Points(0.150, 0.0, 0.150, -0.070)
     l_chaf_der = lines1.AddBy2Points(0.150, -0.070, 0.110, -0.110)
@@ -303,10 +281,8 @@ def build_03_biela_inferior(output_dir: Path) -> Dict[str, Any]:
     l_chaf_izq = lines1.AddBy2Points(-0.110, -0.110, -0.150, -0.070)
     l_lat_izq = lines1.AddBy2Points(-0.150, -0.070, -0.150, 0.0)
 
-    loop = [l_top_izq] + arc_lines + [l_top_der, l_lat_der, l_chaf_der, l_bot, l_chaf_izq, l_lat_izq]
-    for i in range(len(loop) - 1):
-        rels1.AddKeypoint(loop[i], 1, loop[i+1], 0)
-    rels1.AddKeypoint(loop[-1], 1, loop[0], 0)
+    loop = [l_top_izq, arc_inner, l_top_der, l_lat_der, l_chaf_der, l_bot, l_chaf_izq, l_lat_izq]
+    close_profile_keypoints(prof1, loop)
 
     prof1.End(0)
     prof1.Visible = False
@@ -376,6 +352,7 @@ def build_03_biela_inferior(output_dir: Path) -> Dict[str, Any]:
         tree_ops.append(f"4. Redondeos aviso: {e}")
 
     health = validate_part_model_health(doc)
+    surface_audit = audit_model_surfaces(doc)
     exports = capture_and_export_solid_edge_model(doc, save_path)
 
     return {
@@ -384,6 +361,7 @@ def build_03_biela_inferior(output_dir: Path) -> Dict[str, Any]:
         "step_file": exports.get("step_file"),
         "inspection_image": exports.get("inspection_image"),
         "health": health,
+        "surface_audit": surface_audit,
         "tree_operations": tree_ops
     }
 

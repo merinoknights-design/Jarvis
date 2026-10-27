@@ -103,20 +103,43 @@ def add_arc_by_center(prof, cx: float, cy: float, sx: float, sy: float, ex: floa
     return prof.Arcs2d.AddByCenterStartEnd(cx, cy, sx, sy, ex, ey)
 
 
+def add_arc_by_start_along_end(prof, sx: float, sy: float, mx: float, my: float, ex: float, ey: float) -> Any:
+    """Añade un arco circular 2D que pasa por (sx, sy), a lo largo de (mx, my), y termina en (ex, ey)."""
+    return prof.Arcs2d.AddByStartAlongEnd(sx, sy, mx, my, ex, ey)
+
+
+def get_element_keypoint_indices(elem: Any) -> Tuple[int, int]:
+    """Retorna los índices oficiales de Keypoint (inicio, fin) según el tipo de entidad geométrica 2D en Solid Edge COM.
+    - Line2d: Keypoint 0 = Inicio, Keypoint 1 = Fin, Keypoint 2 = Punto medio.
+    - Arc2d: Keypoint 0 = Centro, Keypoint 1 = Inicio, Keypoint 2 = Fin, Keypoint 3 = Punto medio.
+    """
+    try:
+        kp_count = getattr(elem, "KeyPointCount", 0)
+        if kp_count == 8:  # Arc2d
+            return 1, 2
+        elif kp_count == 3:  # Line2d
+            return 0, 1
+    except Exception:
+        pass
+    return 0, 1
+
+
 def close_profile_keypoints(prof, elements_list: List[Any]) -> bool:
-    """Aplica relaciones geométricas de coincidencia (Keypoint) para cerrar el perfil."""
+    """Aplica relaciones geométricas de coincidencia (Keypoint) para cerrar el perfil garantizando
+    la correspondencia exacta entre líneas y arcos verdaderos (evitando unir al centro del arco)."""
     if len(elements_list) < 2:
         return False
     rels = prof.Relations2d
-    for i in range(len(elements_list) - 1):
+    n = len(elements_list)
+    for i in range(n):
+        curr_elem = elements_list[i]
+        next_elem = elements_list[(i + 1) % n]
+        _, curr_end_kp = get_element_keypoint_indices(curr_elem)
+        next_start_kp, _ = get_element_keypoint_indices(next_elem)
         try:
-            rels.AddKeypoint(elements_list[i], 1, elements_list[i + 1], 0)
+            rels.AddKeypoint(curr_elem, curr_end_kp, next_elem, next_start_kp)
         except Exception:
             pass
-    try:
-        rels.AddKeypoint(elements_list[-1], 1, elements_list[0], 0)
-    except Exception:
-        pass
     return True
 
 
