@@ -1,0 +1,8 @@
+{"nombre": "Brida con patrón", "salida": "%ENSAYOS%\\Brida_patron.par", "esperado": {"caja_mm": [120, 120, 15]},
+ "operaciones": [
+  {"tipo": "protrusion", "nombre": "Disco", "plano": "xy", "perfil": [{"circulo": [0, 0, 120]}], "distancia": 15},
+  {"tipo": "agujero", "nombre": "Agujero M8", "plano": "xy", "centros": [[45, 0]], "rosca": "M8", "pasante": true},
+  {"tipo": "patron", "nombre": "6 x M8 en PCD 90", "de": "Agujero M8", "plano": "xy", "circular": {"cantidad": 6, "centro": [0, 0]}},
+  {"tipo": "agujero", "nombre": "Ranura de alivio", "plano": "xy", "centros": [[-20, -30]], "diametro": 4, "pasante": true},
+  {"tipo": "patron", "nombre": "Matriz 3x2", "de": "Ranura de alivio", "plano": "xy", "rectangular": {"cantidad_x": 3, "cantidad_y": 2, "paso_x": 20, "paso_y": 60}}
+ ]}

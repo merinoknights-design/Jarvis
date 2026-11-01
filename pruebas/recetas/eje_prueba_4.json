@@ -1,0 +1,10 @@
+{
+  "nombre": "Eje escalonado de prueba",
+  "salida": "%ENSAYOS%\\Eje_prueba_4.par",
+  "esperado": {"caja_mm": [30, 30, 100], "volumen_mm3": 46784.6, "tolerancia_mm": 0.5},
+  "operaciones": [
+    {"tipo": "revolucion", "nombre": "Eje Ø30x40 + Ø20x60", "plano": "xz", "perfil": [{"poligono": [[0,0],[15,0],[15,40],[10,40],[10,100],[0,100]]}, {"eje": [0, 0, 0, 100]}], "angulo": 360},
+    {"tipo": "corte_revolucion", "nombre": "Ranura 3 mm prof. 2", "plano": "xz", "perfil": [{"rect": [10, 70, 4, 3]}, {"eje": [0, 0, 0, 100]}], "angulo": 360}
+  ]
+}
+

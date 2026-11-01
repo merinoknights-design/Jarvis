@@ -1,0 +1,16 @@
+{
+  "nombre": "Brida de prueba",
+  "salida": "%ENSAYOS%\\Brida_prueba_2.par",
+  "material": "Acero",
+  "propiedades": {"Title": "Brida de prueba", "Author": "Usuario de prueba", "ProjectName": "Pruebas Jarvis"},
+  "esperado": {"caja_mm": [120, 120, 40], "tolerancia_mm": 0.5},
+  "operaciones": [
+    {"tipo": "protrusion", "nombre": "Disco base", "plano": "xy", "perfil": [{"circulo": [0, 0, 120]}], "distancia": 15},
+    {"tipo": "protrusion", "nombre": "Cubo central", "plano": "xy", "perfil": [{"circulo": [0, 0, 60]}], "distancia": 40},
+    {"tipo": "corte", "nombre": "Agujero central", "plano": "xy", "perfil": [{"circulo": [0, 0, 30]}], "pasante": true},
+    {"tipo": "corte", "nombre": "6 agujeros PCD90", "plano": "xy", "perfil": [{"circulos_en_circulo": {"centro": [0, 0], "diametro_pcd": 90, "n": 6, "diametro": 10}}], "pasante": true},
+    {"tipo": "chaflan", "nombre": "Chaflan cara superior", "distancia": 1, "aristas": {"en_plano": {"eje": "z", "valor": "max"}, "circulares": true}},
+    {"tipo": "redondeo", "nombre": "Redondeo borde exterior", "radio": 2, "aristas": {"en_plano": {"eje": "z", "valor": "min"}, "circulares": true}}
+  ]
+}
+

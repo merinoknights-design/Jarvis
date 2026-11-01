@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
+from cad_atomic_lib import FEATURE_OK, FEATURE_WARNED, bounding_box_mm
+
 
 def validate_part_model_health(doc) -> Dict[str, Any]:
     """
@@ -22,6 +24,7 @@ def validate_part_model_health(doc) -> Dict[str, Any]:
         "valid": False,
         "features_total": 0,
         "failed_features": [],
+        "warned_features": [],
         "features_list": [],
         "volume_cm3": 0.0,
         "faces_count": 0,
@@ -47,10 +50,12 @@ def validate_part_model_health(doc) -> Dict[str, Any]:
                 f_status = getattr(feat, "Status", 0)
                 is_suppressed = getattr(feat, "Suppressed", False)
                 health["features_list"].append({"name": f_name, "status": f_status, "suppressed": is_suppressed})
-                # En Solid Edge COM, status 0 o FourCC 1216476310/1216476311 corresponden a operaciones sanas
-                healthy_statuses = [0, 1, 1216476310, 1216476311]
-                if f_status not in healthy_statuses or is_suppressed:
+                # Parche JRV-11 (2026-10-28): antes se aceptaba 1216476311, que es igFeatureFailed, y las
+                # operaciones fallidas pasaban por sanas. Sana = igFeatureOK; con aviso = construyó, se informa.
+                if is_suppressed or f_status not in (FEATURE_OK, FEATURE_WARNED):
                     health["failed_features"].append(f_name)
+                elif f_status == FEATURE_WARNED:
+                    health["warned_features"].append(f_name)
             except Exception:
                 continue
 
@@ -63,27 +68,20 @@ def validate_part_model_health(doc) -> Dict[str, Any]:
                 pass
 
             try:
-                health["faces_count"] = body.Faces.Count
+                health["faces_count"] = body.Faces(1).Count  # Parche JRV-11: Faces exige igQueryAll (1)
                 health["edges_count"] = body.Edges(1).Count
             except Exception:
                 pass
 
-            # Calcular Bounding Box
+            # Calcular Bounding Box (Parche JRV-11: Body.Range no existe; antes la caja salía siempre 0)
             try:
-                min_arr = [0.0, 0.0, 0.0]
-                max_arr = [0.0, 0.0, 0.0]
-                # Range(min, max) en Solid Edge COM
-                body.Range(min_arr, max_arr)
-                dx = abs(max_arr[0] - min_arr[0]) * 1000.0
-                dy = abs(max_arr[1] - min_arr[1]) * 1000.0
-                dz = abs(max_arr[2] - min_arr[2]) * 1000.0
-                health["bounding_box_mm"] = {
-                    "x": round(dx, 2),
-                    "y": round(dy, 2),
-                    "z": round(dz, 2)
-                }
-            except Exception:
-                pass
+                box = bounding_box_mm(body)
+                if box:
+                    health["bounding_box_mm"] = box
+                else:
+                    health["errors"].append("No se pudo leer la caja envolvente (GetRange).")
+            except Exception as e:
+                health["errors"].append(f"Caja envolvente: {e}")
 
         health["valid"] = len(health["failed_features"]) == 0 and health["features_total"] > 0
     except Exception as e:
@@ -95,11 +93,13 @@ def validate_part_model_health(doc) -> Dict[str, Any]:
 def verify_dimensions_against_plan(
     measured_box: Dict[str, float],
     plan_dims: Dict[str, Any],
-    tolerance_mm: float = 5.0
+    tolerance_mm: float = 0.5
 ) -> Tuple[bool, List[str]]:
     """
     Compara las dimensiones físicas reales del Bounding Box de Solid Edge
     con las cotas del plano técnico extraídas por visión.
+    Parche JRV-11 (2026-10-28): tolerancia por defecto ±0,5 mm (la general de los planos del curso; antes 5 mm).
+    Hasta este parche la caja medida valía 0 y esta comparación se saltaba siempre.
     """
     discrepancies: List[str] = []
 

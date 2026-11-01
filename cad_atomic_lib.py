@@ -15,43 +15,38 @@ from typing import Dict, Any, List, Tuple, Optional, Callable
 import pythoncom
 import win32com.client
 
-# Constantes oficiales de la API de Siemens Solid Edge 2026
+# Constantes de lado de la API de Siemens Solid Edge 2026
+# ⚠️ Parche JRV-11 (2026-10-28): en la type library de SE 2026 igLeft = 1 e igRight = 2. Aquí están
+# invertidos desde siempre y TODO el código viejo depende de estos valores (p. ej. los agujeros se cortan
+# con "igRight" = 1, que en realidad quita el INTERIOR del círculo). No cambiar sin revisar cada llamada;
+# en código nuevo usar SE_LEFT / SE_RIGHT, que son los valores reales.
 igRight = 1
 igLeft = 2
 igSymmetric = 3
+SE_LEFT, SE_RIGHT, SE_SYMMETRIC = 1, 2, 3
 seModelingModeOrdered = 2
 seApplicationGlobalDefaultModelingMode = 178
 
-# Estados FourCC oficiales reconocidos como sanos en Solid Edge COM
-HEALTHY_STATUS_CODES = {0, 1, 1216476310, 1216476311}
+# Estado de una operación (FeatureStatusConstants, verificado en la type library de SE 2026).
+# Parche JRV-11: antes este conjunto era {0, 1, 1216476310, 1216476311} y 1216476311 es igFeatureFailed,
+# así que las operaciones FALLIDAS pasaban por sanas. Una operación con aviso sí construyó geometría.
+FEATURE_OK = 1216476310
+FEATURE_FAILED = 1216476311
+FEATURE_WARNED = 1216476312
+FEATURE_SUPPRESSED = 1216476313
+FEATURE_ROLLEDBACK = 1216476314
+HEALTHY_STATUS_CODES = {FEATURE_OK, FEATURE_WARNED}
+
+# Validación de perfiles (ProfileValidationType). Profile.End devuelve 0 si el perfil es válido.
+PROFILE_CLOSED = 1
+PROFILE_REF_AXIS_REQUIRED = 16
 
 
 def connect_or_launch_solidedge():
     """Conecta con la instancia activa de Solid Edge 2026 o inicia una nueva en Modo Ordenado sin cerrar procesos innecesariamente."""
-    pythoncom.CoInitialize()
-    app = None
-    try:
-        app = win32com.client.GetActiveObject("SolidEdge.Application")
-        _ = app.Version
-    except Exception:
-        app = None
-
-    if app is None:
-        try:
-            app = win32com.client.Dispatch("SolidEdge.Application")
-        except Exception:
-            # Solo en caso de error crítico de conexión COM se reinicia el proceso
-            import subprocess
-            try:
-                subprocess.run(["taskkill", "/f", "/im", "Edge.exe"], capture_output=True)
-                time.sleep(1.0)
-            except Exception:
-                pass
-            time.sleep(2.0)
-            app = win32com.client.Dispatch("SolidEdge.Application")
-
-    app.Visible = True
-    app.DisplayAlerts = False
+    # Blindaje 2026-10-28: sin taskkill de Edge.exe; reintento si está ocupado.
+    import se_com_seguro
+    app = se_com_seguro.conectar()
     try:
         app.SetGlobalParameter(seApplicationGlobalDefaultModelingMode, seModelingModeOrdered)
     except Exception:
@@ -143,9 +138,14 @@ def close_profile_keypoints(prof, elements_list: List[Any]) -> bool:
     return True
 
 
-def end_and_hide_profile(prof):
-    """Finaliza el boceto de forma limpia y oculta su visibilidad para operaciones 3D."""
-    prof.End(0)
+def end_and_hide_profile(prof, validation: int = PROFILE_CLOSED):
+    """Finaliza el boceto validando que sea un perfil cerrado y lo oculta.
+    Parche JRV-11 (2026-10-28): antes llamaba a End(0), que no valida nada, y un perfil abierto acababa en
+    una operación rota sin aviso."""
+    status = prof.End(validation)
+    if status not in (0, None):
+        raise ValueError(f"El boceto no es un perfil válido (Profile.End devolvió {status}): "
+                         "revise que esté cerrado y sin líneas sueltas o superpuestas.")
     prof.Visible = False
 
 
@@ -182,7 +182,7 @@ def add_extruded_cutout(model, prof, depth: float, side: int = igRight, extent_t
 def add_revolved_cutout(model, prof, axis_line: Any, sweep_angle: float = 2.0 * math.pi) -> Any:
     """Añade un corte por revolución de 360 grados alrededor de un eje especificado."""
     ref_axis = prof.SetAxisOfRevolution(axis_line)
-    end_and_hide_profile(prof)
+    end_and_hide_profile(prof, PROFILE_CLOSED | PROFILE_REF_AXIS_REQUIRED)
     feat = model.RevolvedCutouts.AddFinite(prof, ref_axis, igRight, igRight, sweep_angle)
     return feat
 
@@ -217,25 +217,56 @@ def apply_fillets_geometric(model, edge_filter_func: Callable[[Any], List[Any]],
     return False, 0
 
 
+def bounding_box_mm(body) -> Optional[Dict[str, float]]:
+    """Caja envolvente del cuerpo en mm, o None si no se puede leer.
+    Parche JRV-11 (2026-10-28): Body.Range NO existe en la API (solo GetRange/GetExactRange), y los puntos
+    vuelven en el VALOR DE RETORNO, no en las listas que se pasan."""
+    res = body.GetRange([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+    pts = [[float(v) for v in r] for r in (res if isinstance(res, (tuple, list)) else [])
+           if isinstance(r, (tuple, list)) and len(r) == 3]
+    if len(pts) < 2:
+        return None
+    mn, mx = pts[0], pts[1]
+    return {"x": round(abs(mx[0] - mn[0]) * 1000.0, 2),
+            "y": round(abs(mx[1] - mn[1]) * 1000.0, 2),
+            "z": round(abs(mx[2] - mn[2]) * 1000.0, 2)}
+
+
 def get_model_physical_properties(model) -> Dict[str, Any]:
     """Lee el volumen, conteo de caras y límites de la caja envolvente del modelo."""
+    # Parche JRV-11 (2026-10-28): cada medida va en su propio try. Antes `body.Faces.Count` (sin el
+    # argumento igQueryAll) lanzaba una excepción y se saltaba todo lo demás, incluida la caja.
     props = {"volume_cm3": 0.0, "faces": 0, "edges": 0, "bounding_box_mm": {"x": 0.0, "y": 0.0, "z": 0.0}}
     try:
         body = model.Body
+    except Exception as e:
+        props["error"] = str(e)
+        return props
+    try:
         props["volume_cm3"] = round(float(body.Volume) * 1_000_000.0, 2)
-        props["faces"] = body.Faces.Count
+    except Exception as e:
+        props["volume_error"] = str(e)
+    try:
+        props["faces"] = body.Faces(1).Count
         props["edges"] = body.Edges(1).Count
-        min_p = [0.0, 0.0, 0.0]
-        max_p = [0.0, 0.0, 0.0]
-        try:
-            body.Range(min_p, max_p)
-            props["bounding_box_mm"] = {
-                "x": round(abs(max_p[0] - min_p[0]) * 1000.0, 1),
-                "y": round(abs(max_p[1] - min_p[1]) * 1000.0, 1),
-                "z": round(abs(max_p[2] - min_p[2]) * 1000.0, 1),
-            }
-        except Exception:
-            pass
-    except Exception:
-        pass
+    except Exception as e:
+        props["topology_error"] = str(e)
+    try:
+        box = bounding_box_mm(body)
+        if box:
+            props["bounding_box_mm"] = box
+        else:
+            props["bounding_box_error"] = "GetRange no devolvió los dos puntos"
+    except Exception as e:
+        props["bounding_box_error"] = str(e)
     return props
+
+
+def verify_removed_volume(model, volume_before_m3: float, expected_removed_m3: float,
+                          rel_tol: float = 0.005) -> Tuple[bool, float]:
+    """Comprueba que un corte quitó el volumen esperado. Devuelve (ok, volumen_quitado_m3).
+    Parche JRV-11 (2026-10-28): un corte puede quedar en estado OK y haber quitado el lado equivocado del
+    perfil o nada en absoluto (p. ej. una ranura dibujada fuera de la pieza)."""
+    removed = volume_before_m3 - float(model.Body.Volume)
+    tol = rel_tol * max(abs(expected_removed_m3), 1e-9) + 1e-9
+    return abs(removed - expected_removed_m3) <= tol, removed

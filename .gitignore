@@ -10,3 +10,17 @@ logs/*
 *.asm
 *.psm
 *.dft
+.env
+
+# Generado en cada equipo o datos locales
+bin/
+agente/tareas/
+agente/gen_py/
+agente/csharp/*.exe
+agente/csharp/*.dll
+agente/csharp/interop/
+agente/csharp/Interferencia.cs
+cardan/inspeccion/
+cardan/huellas_par_*.csv
+actualizacion_conflictos/
+actualizacion_fuente/

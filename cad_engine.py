@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional
 import pythoncom
 import win32com.client
 
+import se_com_seguro
 from cad_edge_selector import (
     filter_support_edges_for_rounds,
     filter_top_rim_edges_for_chamfer,
@@ -33,31 +34,10 @@ seApplicationGlobalDefaultModelingMode = 178
 
 
 def get_or_start_solidedge():
-    """Conecta con la instancia activa de Solid Edge 2026 o la inicia en Modo Ordenado por defecto."""
-    pythoncom.CoInitialize()
-    app = None
-    try:
-        app = win32com.client.GetActiveObject("SolidEdge.Application")
-        _ = app.Version
-    except Exception:
-        app = None
-
-    if app is None:
-        import subprocess
-        try:
-            subprocess.run(["taskkill", "/f", "/im", "Edge.exe"], capture_output=True)
-            import time
-            time.sleep(1.0)
-        except Exception:
-            pass
-        try:
-            app = win32com.client.Dispatch("SolidEdge.Application")
-        except Exception:
-            import time
-            time.sleep(2.0)
-            app = win32com.client.Dispatch("SolidEdge.Application")
-    app.Visible = True
-    app.DisplayAlerts = False
+    """Conecta con la instancia activa de Solid Edge 2026 o la inicia en Modo Ordenado por defecto.
+    Blindaje 2026-10-28: ya NO mata Edge.exe (un Solid Edge ocupado con un diálogo perdía el trabajo
+    sin guardar); si está ocupado, reintenta (se_com_seguro.conectar)."""
+    app = se_com_seguro.conectar()
     # Configurar Solid Edge globalmente para que cree documentos nuevos SIEMPRE en Modo Ordenado (2)
     try:
         app.SetGlobalParameter(seApplicationGlobalDefaultModelingMode, seModelingModeOrdered)
@@ -330,12 +310,8 @@ def build_revolved_part(plan: Dict[str, Any], save_path: Path) -> Dict[str, Any]
 
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    if save_path.exists():
-        try:
-            save_path.unlink()
-        except Exception:
-            import time
-            save_path = save_path.parent / f"{save_path.stem}_{int(time.time())}{save_path.suffix}"
+    # Blindaje 2026-10-28: nunca borrar ni sobrescribir un archivo existente; se usa un nombre libre.
+    save_path = se_com_seguro.ruta_libre(save_path)
 
     doc.SaveAs(str(save_path))
     try:
@@ -483,12 +459,8 @@ def build_flange_coupling_part(plan: Dict[str, Any], save_path: Path) -> Dict[st
 
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    if save_path.exists():
-        try:
-            save_path.unlink()
-        except Exception:
-            import time
-            save_path = save_path.parent / f"{save_path.stem}_{int(time.time())}{save_path.suffix}"
+    # Blindaje 2026-10-28: nunca borrar ni sobrescribir un archivo existente; se usa un nombre libre.
+    save_path = se_com_seguro.ruta_libre(save_path)
 
     doc.SaveAs(str(save_path))
     try:
@@ -730,6 +702,7 @@ def build_prismatic_machined_part(plan: Dict[str, Any], save_path: Path) -> Dict
             pass
 
     save_path.parent.mkdir(parents=True, exist_ok=True)
+    save_path = se_com_seguro.ruta_libre(save_path)  # Blindaje 2026-10-28: nunca sobrescribir
     doc.SaveAs(str(save_path))
     try:
         app.StartCommand(32824)  # Ajustar vista isométrica
@@ -834,8 +807,29 @@ def parse_natural_language_or_drawing_to_cad_plan(text: str) -> Dict[str, Any]:
     bolt_d = float(bolt_d_match.group(1)) if bolt_d_match else 12.0
     hollow = any(w in low for w in ["caja hueca", "carcasa", "vaciado", "recipiente"])
 
+    # Parche JRV-12 (2026-10-30): antes las medidas que faltaban se rellenaban sin avisar (140×90×45, Ø100,
+    # espesor 15, redondeo 2,5…) o se tomaban del primer número suelto del texto. Ahora se anotan como
+    # SUPUESTAS y quien llama debe preguntarlas en vez de modelar.
+    supuestas = []
+    redonda = base_shape in ("revolved", "cylinder", "flange")
+    if not redonda:
+        for nombre, m, val in (("largo", len_match, length), ("ancho", wid_match, width), ("alto", hei_match, height)):
+            if not m and not dim_3d:
+                supuestas.append(f"{nombre} = {val:g} mm")
+    if redonda and not diam_match:
+        supuestas.append(f"diámetro exterior = {outer_d:g} mm")
+    if base_shape in ("flange", "l_bracket") and not thk_match:
+        supuestas.append(f"espesor = {thickness:g} mm")
+    if not fillet_match:
+        supuestas.append(f"radio de redondeo = {fillet_r:g} mm")
+    if bolt_count and not bolts_match:
+        supuestas.append(f"número de agujeros = {bolt_count}")
+    if bolt_count and not bolt_d_match:
+        supuestas.append(f"diámetro de agujeros = {bolt_d:g} mm")
+
     name_clean = re.sub(r"[^\w]+", "_", base_shape).strip("_")
     return {
+        "cotas_supuestas": supuestas,
         "part_name": f"Pieza_{name_clean.capitalize()}_{int(length)}mm",
         "base_shape": base_shape,
         "dimensions_mm": {
@@ -873,15 +867,19 @@ def assemble_any_parts_in_solidedge(part_files: List[str], asm_save_path: Path) 
                 pass
 
     asm_save_path.parent.mkdir(parents=True, exist_ok=True)
+    asm_save_path = se_com_seguro.ruta_libre(asm_save_path)  # Blindaje 2026-10-28: nunca sobrescribir
     asm_doc.SaveAs(str(asm_save_path))
     try:
         app.StartCommand(32824)
     except Exception:
         pass
 
+    # Blindaje 2026-10-28: este ensamble genérico NO crea relaciones; se dice tal cual.
     return {
         "assembly_file": str(asm_save_path),
-        "inserted_parts": inserted
+        "inserted_parts": inserted,
+        "relations_created": 0,
+        "all_parts_grounded": True,
     }
 
 

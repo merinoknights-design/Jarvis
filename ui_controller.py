@@ -46,7 +46,8 @@ VK_RETURN = 0x0D
 VK_SPACE = 0x20
 VK_ESCAPE = 0x1B
 
-DEFAULT_BRAVE_KEY = "BSAPviCA5RJG-aAnfg5LZKBgX02gLQL"
+import entorno  # noqa: E402,F401  (carga C:\Jarvis\.env)
+DEFAULT_BRAVE_KEY = os.environ.get("BRAVE_API_KEY", "")  # Parche JRV-61 (2026-10-30): la clave vive en C:\Jarvis\.env
 _ocr_engine = None
 
 

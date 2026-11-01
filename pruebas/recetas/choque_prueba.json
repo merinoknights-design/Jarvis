@@ -1,0 +1,4 @@
+{"nombre": "Choque de prueba", "salida": "%ENSAYOS%\\Choque_prueba.asm",
+ "piezas": [{"id": "base", "archivo": "%ENSAYOS%\\Base_prueba.par", "fija": true},
+            {"id": "tapa", "archivo": "%ENSAYOS%\\Tapa_prueba.par", "posicion": [0, 0, 15]}],
+ "relaciones": []}

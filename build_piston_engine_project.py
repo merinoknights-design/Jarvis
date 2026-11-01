@@ -397,8 +397,8 @@ def build_04_ensamble_motor(parts_paths: Dict[str, str], output_dir: Path) -> Di
             # Posicionar articulada concéntrica con el pasador en Z = -0.135
             occ_biela_sup.PutOrigin(0.0, -0.750, -0.135)
             inserted.append("02_Biela_Parte_Superior.par (Coaxial con pasador del pistón, Z=-135mm)")
-            relations_log.append("Relación 1: Alineación coaxial pasador pistón R25 <-> pie de biela R25 (Giro libre)")
-            relations_log.append("Relación 2: Centrado planar pie de biela (100mm) dentro de apertura de apoyos (100mm)")
+            # Blindaje 2026-10-28: antes se anunciaban relaciones que NUNCA se creaban.
+            relations_log.append("Biela superior posicionada por coordenadas (PutOrigin) — SIN relaciones de ensamble")
         except Exception as e:
             relations_log.append(f"Aviso al insertar biela superior: {e}")
 
@@ -411,8 +411,7 @@ def build_04_ensamble_motor(parts_paths: Dict[str, str], output_dir: Path) -> Di
             # Cara de contacto en Y = 0 relativo a la cabeza de la biela
             occ_biela_inf.PutOrigin(0.0, -0.750, -0.135)
             inserted.append("03_Biela_Parte_Inferior.par (Acoplado en cabeza de biela Y=0)")
-            relations_log.append("Relación 3: Contacto coincidente plano entre caras de partición de biela superior e inferior")
-            relations_log.append("Relación 4: Alineación coaxial pernos de orejas R15 en X=+/-130mm")
+            relations_log.append("Biela inferior posicionada por coordenadas (PutOrigin) — SIN relaciones de ensamble")
         except Exception as e:
             relations_log.append(f"Aviso al insertar biela inferior: {e}")
 
