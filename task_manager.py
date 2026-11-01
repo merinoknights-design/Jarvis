@@ -38,6 +38,18 @@ def execute_smart_task(
         def _silent_worker():
             try:
                 worker_fn()
+            except Exception as e:
+                # Blindaje 2026-10-28: antes el error se perdía en silencio y el usuario creía que
+                # la pieza se había hecho. Ahora se avisa.
+                with _lock:
+                    COMPLETED_NOTIFICATIONS.append({
+                        "id": task_id,
+                        "title": title,
+                        "message": f"⚠️ {title} falló: {e}",
+                        "voice_summary": f"{title} falló, Señor. Revise el detalle.",
+                        "tool_used": tool_name,
+                        "status": "error"
+                    })
             finally:
                 with _lock:
                     ACTIVE_TASKS.pop(task_id, None)

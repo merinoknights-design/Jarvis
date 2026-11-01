@@ -1,0 +1,2 @@
+{"nombre": "Base", "salida": "%ENSAYOS%\\Base_prueba.par", "esperado": {"caja_mm": [100, 60, 20]},
+ "operaciones": [{"tipo": "protrusion", "plano": "xy", "perfil": [{"rect": [0, 0, 100, 60]}], "distancia": 20}]}

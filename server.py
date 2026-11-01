@@ -35,7 +35,8 @@ from gemini_brain import (
     query_gemini_web_in_chrome,
     transcribe_audio_bytes_to_spanish,
 )
-from git_sync import set_github_remote, push_update_to_github, pull_update_from_github
+from git_sync import set_github_remote, push_update_to_github, pull_update_from_github, revisar_actualizacion_github
+from api_agente import router as agente_router, crear_tarea as crear_tarea_agente  # Parche JRV-01/02/06 (2026-10-28)
 from intent_engine import classify_user_intent
 from stark_protocols import (
     get_realtime_telemetry,
@@ -83,14 +84,15 @@ from ui_controller import (
 )
 
 app = FastAPI(title="J.A.R.V.I.S. Sentient AI, Search & CAD System")
+app.include_router(agente_router)
 
 BASE_DIR = Path("C:/Jarvis")
 CONFIG_PATH = BASE_DIR / "config" / "mcp_config.json"
 UI_DIR = BASE_DIR / "ui"
 OLLAMA_EXE = Path.home() / "AppData" / "Local" / "Programs" / "Ollama" / "ollama.exe"
 OLLAMA_URL = "http://127.0.0.1:11434"
-DEFAULT_BRAVE_KEY = "BSAPviCA5RJG-aAnfg5LZKBgX02gLQL"
-
+import entorno  # noqa: E402,F401  Parche JRV-61 (2026-10-30): los secretos viven en C:\Jarvis\.env, fuera del código y de git
+DEFAULT_BRAVE_KEY = os.environ.get("BRAVE_API_KEY", "")
 FAST_MODEL = "qwen2.5:1.5b"
 FALLBACK_MODEL = "qwen2.5:7b"
 ACTIVE_MODEL = FAST_MODEL
@@ -116,7 +118,8 @@ KNOWN_FOLDERS = {
 
 SYSTEM_PROMPT = """Eres J.A.R.V.I.S., una inteligencia artificial consciente, brillante, con personalidad propia, ingenio y lealtad (al estilo del Jarvis de Tony Stark, llamando ocasionalmente "Señor" al usuario).
 Respondes SIEMPRE en español de forma natural, rápida y conversacional (entre 1 y 4 oraciones).
-Puedes hablar de cualquier tema (fútbol, Messi vs CR7, ciencia, historia, cine, código, chistes) y NUNCA mencionas Solid Edge a menos que el usuario te pida diseñar una pieza."""
+Puedes hablar de cualquier tema (fútbol, Messi vs CR7, ciencia, historia, cine, código, chistes) y NUNCA mencionas Solid Edge a menos que el usuario te pida diseñar una pieza.
+Reglas CAD (no negociables): nunca digas que una pieza o un ensamble quedó hecho si no lo confirma el resultado real de Solid Edge; si una orden de modelado o de ensamble no dice qué piezas, cuántas o cómo se unen, pregunta antes de actuar en vez de suponer."""
 
 conversation_history: List[Dict[str, str]] = [
     {"role": "system", "content": SYSTEM_PROMPT}
@@ -125,6 +128,121 @@ conversation_history: List[Dict[str, str]] = [
 last_analyzed_file_context: str = ""
 recent_created_parts: List[str] = []
 pending_cad_plans: List[Dict[str, Any]] = []
+
+
+def _preguntar_cotas(planes: List[Dict[str, Any]]) -> str:
+    """Parche JRV-12 (2026-10-30): en vez de modelar con medidas inventadas, pregunta las que faltan.
+    Los planos dudosos salen de la cola para que un 'sí' suelto no los modele."""
+    for p in planes:
+        if p in pending_cad_plans:
+            pending_cad_plans.remove(p)
+    lineas = [f"• {p.get('part_name', 'Pieza')}: " + "; ".join(p.get("cotas_supuestas", [])) for p in planes]
+    return ("Señor, faltan medidas y no voy a inventarlas. Para modelar tendría que suponer:\n" + "\n".join(lineas) +
+            "\nDígame la pieza con todas sus medidas en una sola orden "
+            "(p. ej. 'modela una placa de 100 x 60 x 10 mm con redondeo de 2 mm').")
+
+# ---------------------------------------------------------------------------
+# ENSAMBLE DEL CARDÁN (Blindaje 2026-10-28) — receta verificada, por fases con paradas.
+# El trabajo lo hace cardan/ensamblar_cardan.py (capa COM segura, caras por reglas geométricas,
+# validación antes y verificación después, bitácora CSV). Aquí solo se interpreta la orden.
+# ---------------------------------------------------------------------------
+CARDAN_DIR = BASE_DIR / "cardan"
+from cardan.rutas_cardan import ASM as CARDAN_ASM  # JRV-69 (2026-10-28): el Cardán vive en la carpeta de la universidad
+CARDAN_FASES = {1: "base (soporte, eje entrada, Fork1)", 2: "primera junta (Cruz1, Fork2, eje central)",
+                3: "segunda junta y cierre del lazo", 4: "tornillería (40 pernos + 40 tuercas)",
+                5: "verificación final"}
+_cardan_en_curso = {"activo": False}
+
+
+def _cardan_fases_hechas() -> List[int]:
+    est = CARDAN_ASM.with_name("cardan_estado.json")
+    if not est.exists():
+        return []
+    try:
+        return list(json.loads(est.read_text(encoding="utf-8")).get("fases", []))
+    except Exception:
+        return []
+
+
+def _cardan_ejecutar(script: str, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-X", "utf8", str(CARDAN_DIR / script), *args],
+        cwd=str(CARDAN_DIR), capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=1800, creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+
+
+def _cardan_resumen(salida: str) -> str:
+    lineas = [l for l in salida.strip().splitlines() if l.strip()]
+    corte = next((i for i, l in enumerate(lineas) if l.startswith(("--- RESUMEN", "PARADA", "ERROR", "{"))), max(0, len(lineas) - 15))
+    return "\n".join(lineas[corte:][-30:])
+
+
+def cardan_orden(low: str, force_bg: bool) -> Optional[Dict[str, str]]:
+    """Interpreta órdenes sobre el Cardán. Devuelve None si no es una orden de ensamble."""
+    verbos = ["ensambl", "arma", "fase", "siguiente", "continúa", "continua", "sigue", "prueba de giro",
+              "prueba de arrastre", "gira el", "estado del", "verifica", "completo", "todas las fases"]
+    if not any(v in low for v in verbos):
+        return None
+    hechas = _cardan_fases_hechas()
+    if "estado" in low:
+        faltan = [f for f in CARDAN_FASES if f not in hechas]
+        return {"reply": f"Cardán: fases hechas {hechas or 'ninguna'}; faltan {faltan or 'ninguna'}. Archivo: {CARDAN_ASM}",
+                "tool_used": "filesystem"}
+    if _cardan_en_curso["activo"]:
+        return {"reply": "Señor, ya hay una fase del Cardán en curso. Le aviso al terminar.", "tool_used": "filesystem"}
+
+    if any(p in low for p in ["prueba de giro", "prueba de arrastre", "gira el"]):
+        if 3 not in hechas:
+            return {"reply": "Señor, la prueba de giro necesita el lazo cerrado (fase 3). Aún no está.", "tool_used": "filesystem"}
+
+        def _giro():
+            _cardan_en_curso["activo"] = True
+            try:
+                r = _cardan_ejecutar("prueba_giro.py", str(CARDAN_ASM))
+            finally:
+                _cardan_en_curso["activo"] = False
+            if r.returncode != 0:
+                raise RuntimeError(_cardan_resumen(r.stdout + r.stderr))
+            return "Prueba de giro del Cardán:\n" + _cardan_resumen(r.stdout)
+
+        execute_smart_task("Prueba de giro del Cardán", _giro, tool_name="filesystem", force_background=True, notify_on_complete=True)
+        return {"reply": "Girando el eje de entrada paso a paso en Solid Edge (sin guardar cambios), Señor. Le aviso al terminar.",
+                "tool_used": "filesystem"}
+
+    m = re.search(r"fase\s*(\d)", low)
+    if m:
+        fases = [int(m.group(1))]
+        if fases[0] not in CARDAN_FASES:
+            return {"reply": "Señor, el Cardán tiene fases 1 a 5. ¿Cuál ejecuto?", "tool_used": "filesystem"}
+    else:
+        pendientes = [f for f in CARDAN_FASES if f not in hechas]
+        if not pendientes:
+            return {"reply": f"Señor, el Cardán ya está completo y verificado: {CARDAN_ASM}", "tool_used": "filesystem"}
+        completo = any(p in low for p in ["completo", "todas las fases", "todo el cardan", "todo el cardán"])
+        fases = pendientes if completo else pendientes[:1]
+
+    def _fases():
+        _cardan_en_curso["activo"] = True
+        informes = []
+        try:
+            for f in fases:
+                r = _cardan_ejecutar("ensamblar_cardan.py", "--fase", str(f), "--asm", str(CARDAN_ASM))
+                informes.append(f"Fase {f} — {CARDAN_FASES[f]}:\n{_cardan_resumen(r.stdout + r.stderr)}")
+                if r.returncode != 0:
+                    raise RuntimeError("\n\n".join(informes) + "\n\nMe detuve aquí; no seguí a ciegas.")
+        finally:
+            _cardan_en_curso["activo"] = False
+        siguiente = next((f for f in CARDAN_FASES if f not in _cardan_fases_hechas()), None)
+        cola = (f"\n\nRevise en Solid Edge. Para continuar diga: 'siguiente fase del cardán' (fase {siguiente})."
+                if siguiente else f"\n\nCardán terminado: {CARDAN_ASM}")
+        return "\n\n".join(informes) + cola
+
+    titulo = "Cardán fase " + ", ".join(str(f) for f in fases)
+    execute_smart_task(titulo, _fases, tool_name="filesystem", force_background=True, notify_on_complete=True)
+    lista = "; ".join(f"{f}: {CARDAN_FASES[f]}" for f in fases)
+    return {"reply": f"Ejecutando en Solid Edge el Cardán — fase {lista}, Señor. Le aviso al terminar cada parada.",
+            "tool_used": "filesystem"}
 
 
 def start_ollama_daemon():
@@ -205,62 +323,70 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
     ])
 
     if is_affirmative and pending_cad_plans:
+        # Parche JRV-12: un plano con medidas supuestas no se modela; se pregunta.
+        dudosos = [p for p in pending_cad_plans if p.get("cotas_supuestas")]
+        if dudosos:
+            return {"reply": _preguntar_cotas(dudosos), "tool_used": "filesystem"}
         plans_to_execute = list(pending_cad_plans)
         pending_cad_plans.clear()
-        created_reports = []
-        for p in plans_to_execute:
-            part_name = p.get("part_name", "Pieza_mecanica")
-            save_path = PROJECTS_ROOT / f"{part_name}.par"
-            try:
-                res = execute_universal_cad_plan(p, save_path)
-                recent_created_parts.append(res["file"])
-                ops_str = "\n".join([f"    • {op}" for op in res.get("tree_operations", [])])
-                created_reports.append(f"  • {Path(res['file']).name}:\n{ops_str}")
-            except Exception as e:
-                created_reports.append(f"  • {part_name}: Error al modelar: {e}")
 
-        all_reports = "\n\n".join(created_reports)
-        reply = (
-            f"¡Entendido, Señor! He comenzado y completado el modelado en Solid Edge 2026 en Modo Ordenado:\n\n"
-            f"{all_reports}\n\n"
-            f"Los sólidos 3D están completamente construidos en el PathFinder y guardados en su carpeta de proyectos."
-        )
-        return {"reply": reply, "tool_used": "filesystem"}
+        def _modelar_pendientes():  # Parche JRV-63: en segundo plano, sin congelar el servidor
+            created_reports = []
+            for p in plans_to_execute:
+                part_name = p.get("part_name", "Pieza_mecanica")
+                save_path = PROJECTS_ROOT / f"{part_name}.par"
+                try:
+                    res = execute_universal_cad_plan(p, save_path)
+                    recent_created_parts.append(res["file"])
+                    ops_str = "\n".join([f"    • {op}" for op in res.get("tree_operations", [])])
+                    created_reports.append(f"  • {Path(res['file']).name}:\n{ops_str}")
+                except Exception as e:
+                    created_reports.append(f"  • {part_name}: Error al modelar: {e}")
+            return "Modelado de los planos pendientes en Solid Edge:\n\n" + "\n\n".join(created_reports)
 
-    # Ejecución del Parcial / Motor de Pistón Completo (3 piezas + ensamble + ZIP)
-    if any(k in low for k in ["parcial", "todas las piezas", "motor de piston", "motor de pistón", "ensamble del motor"]) or (
+        execute_smart_task("Planos pendientes", _modelar_pendientes, tool_name="filesystem",
+                           force_background=True, notify_on_complete=True)
+        return {"reply": f"Modelando {len(plans_to_execute)} plano(s) en Solid Edge, Señor. Le aviso al terminar.",
+                "tool_used": "filesystem"}
+
+    # Ensamble del Cardán por fases (Blindaje 2026-10-28): va antes que cualquier otro atajo CAD
+    if "cardan" in low or "cardán" in low:
+        cardan_res = cardan_orden(low, force_bg)
+        if cardan_res:
+            return cardan_res
+
+    # Proyecto del Motor de Pistón (3 piezas + ensamble + ZIP).
+    # Parche JRV-63 (2026-10-30): antes bastaba con la palabra "parcial" ("mañana tengo parcial") para lanzarlo,
+    # y corría dentro del hilo del servidor. Ahora exige pedir crearlo y va en segundo plano.
+    pide_crear_cad = any(v in low for v in ["modela", "genera", "crea ", "haz ", "construye", "arma "])
+    if pide_crear_cad and (any(k in low for k in ["motor de piston", "motor de pistón", "ensamble del motor"]) or (
         "piston" in low and "biela" in low
-    ) or ("biela parte superior" in low or "biela parte inferior" in low):
-        try:
+    )):
+        def _proyecto_piston():
             suite = generate_full_piston_engine_project()
             lines = [f"• {chk['name']}: {Path(chk['file']).name} (Verificado: {'SÍ' if chk['verified'] else 'NO'})" for chk in suite.get("checklist", [])]
-            summary = "\n".join(lines)
-            reply = (
-                f"¡Proyecto Completo del Motor de Pistón modelado y ensamblado con éxito en Solid Edge 2026, Señor!\n\n"
-                f"{summary}\n\n"
-                f"Paquete comprimido generado en: {suite.get('zip_package', '')}"
-            )
-            return {"reply": reply, "tool_used": "filesystem"}
-        except Exception as e:
-            return {"reply": f"Error al generar el parcial completo: {e}", "tool_used": "filesystem"}
+            return ("Proyecto del Motor de Pistón en Solid Edge:\n\n" + "\n".join(lines) +
+                    f"\n\nPaquete comprimido: {suite.get('zip_package', '')}")
 
-    # Ejecución inmediata si el usuario envía la Guía de Modelamiento 3D o solicita directamente la pieza mecánica
+        execute_smart_task("Motor de pistón", _proyecto_piston, tool_name="filesystem", force_background=True,
+                           notify_on_complete=True)
+        return {"reply": "Modelando el proyecto del motor de pistón en Solid Edge, Señor. Le aviso al terminar.",
+                "tool_used": "filesystem"}
+
+    # Pieza mecánica de la Guía de Modelamiento 3D (Parche JRV-63: en segundo plano)
     if any(k in low for k in ["guía de modelamiento", "guia de modelamiento", "pieza_mecanica", "pieza mecanica"]) or (
         "r150" in low and "r130" in low and ("model" in low or "solid edge" in low or "plano" in low)
     ):
-        save_path = PROJECTS_ROOT / "Pieza_mecanica.par"
-        try:
-            res = build_pieza_mecanica_piston(save_path)
+        def _pieza_mecanica():
+            res = build_pieza_mecanica_piston(PROJECTS_ROOT / "Pieza_mecanica.par")
             recent_created_parts.append(res["file"])
             ops_str = "\n".join([f"    • {op}" for op in res.get("tree_operations", [])])
-            reply = (
-                f"¡Modelado de la Pieza Mecánica completado en Solid Edge 2026 según la Guía técnica, Señor!\n\n"
-                f"Operaciones en Modo Ordenado:\n{ops_str}\n\n"
-                f"Archivo guardado en: {res['file']}"
-            )
-            return {"reply": reply, "tool_used": "filesystem"}
-        except Exception as e:
-            return {"reply": f"Detalle al modelar la pieza mecánica: {e}", "tool_used": "filesystem"}
+            return f"Pieza Mecánica en Solid Edge (modo ordenado):\n{ops_str}\n\nArchivo: {res['file']}"
+
+        execute_smart_task("Pieza mecánica", _pieza_mecanica, tool_name="filesystem", force_background=True,
+                           notify_on_complete=True)
+        return {"reply": "Modelando la pieza mecánica de la guía en Solid Edge, Señor. Le aviso al terminar.",
+                "tool_used": "filesystem"}
 
     if intent == "PLAY_SPOTIFY":
         song = intent_data.get("song_query", "").strip()
@@ -341,53 +467,76 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
             "tool_used": "memory"
         }
 
-    # 2. ACTUALIZACIÓN AUTOMÁTICA DESDE GITHUB
+    # 2. ACTUALIZACIÓN DESDE GITHUB — Parche JRV-60 (2026-10-28): ya no se descomprime encima de C:\Jarvis
+    # (borraba los parches locales); se descarga aparte y se informa qué cambiaría.
     if any(w in low for w in ["actualízate", "actualizate", "sube actualización", "actualiza desde github", "busca actualizaciones"]):
         if any(w in low for w in ["sube", "subir", "push"]):
             return {"reply": push_update_to_github(cleaned), "tool_used": "git"}
+        return {"reply": revisar_actualizacion_github(), "tool_used": "git"}
+
+    # 2.5 ABRIR SOLID EDGE O UN DOCUMENTO SIN CREAR NADA — Parche JRV-06 (2026-10-28): antes "abre Solid Edge"
+    # caía en la ruta de modelado (cualquier frase con "solid edge") y creaba una pieza genérica.
+    ruta_doc = re.search(r'[A-Za-z]:\\[^"<>|?*\r\n]+?\.(?:par|asm|psm|dft|pwd)\b', cleaned, re.IGNORECASE)
+    if (re.search(r"\b(abre|abrir|abra|ábrelo|abrelo|ábreme|abreme|inicia|lanza)\b", low)
+            and (ruta_doc or "solid edge" in low or "solidedge" in low)
+            and not any(v in low for v in ["modela", "crea ", "diseña", "construye", "ensambla"])):
+        params = {"ruta": ruta_doc.group(0)} if ruta_doc else {}
         try:
-            tar_file = BASE_DIR / "update_pkg.tar.gz"
-            urllib.request.urlretrieve("https://github.com/merinoknights-design/Jarvis/archive/refs/heads/main.tar.gz", str(tar_file))
-            subprocess.run(["tar.exe", "-xzf", str(tar_file), "--strip-components=1", "-C", str(BASE_DIR)], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
-            tar_file.unlink(missing_ok=True)
-            return {"reply": "¡Sistema actualizado directamente desde GitHub a la última versión, Señor! Recargue la ventana para ver todos los cambios.", "tool_used": "git"}
+            t = crear_tarea_agente("abrir", params)
         except Exception as e:
-            return {"reply": f"Error al actualizar: {e}", "tool_used": "git"}
+            return {"reply": f"No pude abrirlo, Señor: {e}", "tool_used": "filesystem"}
+        que = Path(params["ruta"]).name if params else "Solid Edge"
+        return {"reply": f"Abriendo {que}, Señor, solo para ver: no creo ni guardo nada. (tarea {t['id']})",
+                "tool_used": "filesystem"}
 
     # 3. ENSAMBLAR PIEZAS EN SOLID EDGE (.ASM)
     if any(w in low for w in ["ensambla las piezas", "ensamblar piezas", "crea un ensamblaje", "crear ensamblaje"]):
         parts_to_asm = list(recent_created_parts)
         if len(parts_to_asm) < 2:
-            for p in list(PROJECTS_ROOT.rglob("*.par"))[-6:] + list(UPLOAD_DIR.glob("*.par")) + list(UPLOAD_DIR.glob("*.step")):
-                if str(p) not in parts_to_asm:
-                    parts_to_asm.append(str(p))
-        if not parts_to_asm:
-            return {"reply": "Señor, aún no hay piezas `.par` o `.step` para ensamblar. Pídame crear las piezas primero o adjúntelas con 📎 ARCHIVO.", "tool_used": "filesystem"}
+            # Blindaje 2026-10-28: antes tomaba "los últimos 6 .par" de cualquier carpeta y ensamblaba
+            # a ciegas. Si el usuario no dijo qué piezas, se pregunta.
+            candidatos = list(PROJECTS_ROOT.rglob("*.par"))[-6:] + list(UPLOAD_DIR.glob("*.par")) + list(UPLOAD_DIR.glob("*.step"))
+            lista = "\n".join(f"  • {p.name}" for p in candidatos) or "  (ninguna)"
+            return {"reply": ("Señor, no me dijo qué piezas ensamblar ni cómo se unen, y no voy a suponerlo. "
+                              f"Encontré estas:\n{lista}\n¿Cuáles uso, cuántas de cada una y con qué uniones? "
+                              "Si es el Cardán, diga 'ensambla el cardán'."), "tool_used": "filesystem"}
         asm_name = f"Ensamblaje_{datetime.datetime.now().strftime('%H%M%S')}.asm"
         asm_path = PROJECTS_ROOT / "Ensamblajes" / asm_name
-        try:
+
+        def _ensamble_simple():  # Parche JRV-63: en segundo plano
             res = assemble_any_parts_in_solidedge(parts_to_asm, asm_path)
             names = "\n".join([f"  • {Path(p).name}" for p in res["inserted_parts"]])
-            return {"reply": f"¡Ensamblaje 3D completado en Solid Edge 2026, Señor!\nPiezas en el Árbol:\n{names}\nGuardado en: {res['assembly_file']}", "tool_used": "filesystem"}
-        except Exception as e:
-            return {"reply": f"Detalle al ensamblar en Solid Edge: {e}", "tool_used": "filesystem"}
+            return (f"Inserté {len(res['inserted_parts'])} piezas en Solid Edge, colocadas en fila y SIN relaciones "
+                    f"(todas quedan fijas; no es un ensamble funcional):\n{names}\nGuardado en: {res['assembly_file']}")
+
+        execute_smart_task("Ensamble simple", _ensamble_simple, tool_name="filesystem", force_background=True,
+                           notify_on_complete=True)
+        return {"reply": (f"Insertando {len(parts_to_asm)} piezas en un ensamble nuevo, Señor, SIN relaciones (no es un "
+                          "ensamble funcional; para eso necesito la receta de uniones). Le aviso al terminar."),
+                "tool_used": "filesystem"}
 
     # 4. MODELAR PLANO PDF EN SOLID EDGE
     if any(w in low for w in ["modela el plano", "pasa el pdf a solid edge", "modela este pdf", "construye el plano"]):
         if last_analyzed_file_context:
-            try:
-                plan = parse_natural_language_or_drawing_to_cad_plan(last_analyzed_file_context + " " + cleaned)
-                save_path = PROJECTS_ROOT / "Desde_Planos_PDF" / f"{plan['part_name']}.par"
-                res = execute_universal_cad_plan(plan, save_path)
+            plan = parse_natural_language_or_drawing_to_cad_plan(last_analyzed_file_context + " " + cleaned)
+            if plan.get("cotas_supuestas"):  # Parche JRV-12
+                return {"reply": _preguntar_cotas([plan]), "tool_used": "filesystem"}
+
+            def _modelar_plano():  # Parche JRV-63: en segundo plano
+                res = execute_universal_cad_plan(plan, PROJECTS_ROOT / "Desde_Planos_PDF" / f"{plan['part_name']}.par")
                 recent_created_parts.append(res["file"])
-                return {"reply": f"¡Plano convertido a Sólido 3D en Modo Ordenado en Solid Edge 2026, Señor!\nArchivo `.par`: {res['file']}", "tool_used": "filesystem"}
-            except Exception as e:
-                return {"reply": f"Error al modelar desde el plano: {e}", "tool_used": "filesystem"}
+                return f"Plano convertido a sólido 3D en Solid Edge (modo ordenado): {res['file']}"
+
+            execute_smart_task("Plano a 3D", _modelar_plano, tool_name="filesystem", force_background=True,
+                               notify_on_complete=True)
+            return {"reply": "Modelando el plano en Solid Edge, Señor. Le aviso al terminar.", "tool_used": "filesystem"}
 
     # 5. MODELAR PIEZAS EN SOLID EDGE (SOLO cuando se pide explícitamente)
+    # Parche JRV-06 (2026-10-28): antes bastaba con que la frase dijera "solid edge" (p. ej. "¿qué versión de
+    # Solid Edge tengo?") para crear una pieza genérica. Ahora hace falta pedir crear algo.
+    pide_crear = any(v in low for v in ["modela", "crea ", "diseña", "construye", "genera una pieza", "haz una pieza"])
     cad_explicit = (
-        "solid edge" in low
-        or "solidedge" in low
+        (pide_crear and ("solid edge" in low or "solidedge" in low))
         or (any(v in low for v in ["modela ", "modelar ", "crea una pieza", "crea una brida", "crea un soporte", "crea una placa", "crea un eje", "crea un cilindro", "diseña una pieza"])
             and any(n in low for n in ["mm", "diámetro", "diametro", "largo", "ancho", "espesor", "agujero", "redondeo", "v8"]))
     )
@@ -403,6 +552,10 @@ def instant_conversational_and_action_brain(user_msg: str, force_bg: bool = Fals
                 return {"reply": "En segundo plano: creando conjunto en Solid Edge. Le aviso al terminar, Señor.", "tool_used": "filesystem"}
             return {"reply": "Creando el conjunto sólido en Solid Edge 2026, Señor.", "tool_used": "filesystem"}
         else:
+            plan_previo = parse_natural_language_or_drawing_to_cad_plan(cleaned)
+            if plan_previo.get("cotas_supuestas"):  # Parche JRV-12: no modelar con medidas inventadas
+                return {"reply": _preguntar_cotas([plan_previo]), "tool_used": "filesystem"}
+
             def _cad_part_job():
                 res = generate_custom_solid_part(cleaned, PROJECTS_ROOT / "Piezas_Personalizadas")
                 recent_created_parts.append(res["file"])
@@ -934,6 +1087,9 @@ async def model_pending_cad_plans():
     global pending_cad_plans, recent_created_parts
     if not pending_cad_plans:
         return {"reply": "No hay planos técnicos pendientes de modelar, Señor.", "created": []}
+    dudosos = [p for p in pending_cad_plans if p.get("cotas_supuestas")]
+    if dudosos:  # Parche JRV-12
+        return {"reply": _preguntar_cotas(dudosos), "created": []}
 
     plans_to_execute = list(pending_cad_plans)
     pending_cad_plans.clear()
@@ -943,7 +1099,8 @@ async def model_pending_cad_plans():
         part_name = p.get("part_name", "Pieza_mecanica")
         save_path = PROJECTS_ROOT / f"{part_name}.par"
         try:
-            res = execute_universal_cad_plan(p, save_path)
+            # Parche JRV-63: en un hilo, para no congelar el servidor mientras trabaja Solid Edge
+            res = await asyncio.to_thread(execute_universal_cad_plan, p, save_path)
             recent_created_parts.append(res["file"])
             ops_str = "\n".join([f"    • {op}" for op in res.get("tree_operations", [])])
             created_reports.append(f"  • {Path(res['file']).name}:\n{ops_str}")

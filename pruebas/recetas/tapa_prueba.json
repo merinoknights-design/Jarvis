@@ -1,0 +1,2 @@
+{"nombre": "Tapa", "salida": "%ENSAYOS%\\Tapa_prueba.par", "esperado": {"caja_mm": [60, 40, 10]},
+ "operaciones": [{"tipo": "protrusion", "plano": "xy", "perfil": [{"rect": [0, 0, 60, 40]}], "distancia": 10}]}

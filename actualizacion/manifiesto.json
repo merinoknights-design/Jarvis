@@ -1,0 +1,206 @@
+{
+ "version": "2026-11-01",
+ "base": "702bdcf76fc4da55dc50426d8c864bb33c171477",
+ "archivos": {
+  ".env.ejemplo": {
+   "base": null,
+   "nuevo": "05dadaa37069c27bb32f58a13df149e00a410e6e234a59ab3723b1f122ea716b"
+  },
+  ".gitignore": {
+   "base": "f332d0a19231fb1b28ba5ee9429d2094f86447733713407841ce70b8d96b2233",
+   "nuevo": "53f9748a1115d07639ad72132f342d20d1d7b09a4394c6de6b082ef38160f739"
+  },
+  "agente/acciones.py": {
+   "base": null,
+   "nuevo": "4fcf91251a0bcdf8bb19247189219dc3da6bbfca6b06099f8135664bab221911"
+  },
+  "agente/barrido_choques.py": {
+   "base": null,
+   "nuevo": "e2279899bddd19f4675ca91b948f27244806ebfa5d19dd1be49eb8cbc99daab4"
+  },
+  "agente/caras.py": {
+   "base": null,
+   "nuevo": "d24b7b5493dd5549bf14c2e6c41367d11c876c743bf78c233d2df078420d57bb"
+  },
+  "agente/csharp/compilar.py": {
+   "base": null,
+   "nuevo": "a996d2cc431f3648f289df31a53fc4486765cbd5d3daf4508ea84a4fc160fe85"
+  },
+  "agente/csharp/GenerarInterop.cs": {
+   "base": null,
+   "nuevo": "5e6c1c6b19ed31af77ef3fe7f1cb7948a3435507d630dd80ea8993827e7ed1db"
+  },
+  "agente/csharp/InterferenciaTipada.cs": {
+   "base": null,
+   "nuevo": "552e4c847e3c704c495d5099145c62ebde0c383bb3384e26c9cecbb12b92e0e2"
+  },
+  "agente/editar_pieza.py": {
+   "base": null,
+   "nuevo": "9b6a67590fe729fda74fd3f5806104ff29d0682ace1c68f895238b8c5f27240c"
+  },
+  "agente/explosion.py": {
+   "base": null,
+   "nuevo": "2186d96a3e22dbae63347c69bfe502e60f850a2771273664cc653b5861b2fe1f"
+  },
+  "agente/interferencia.py": {
+   "base": null,
+   "nuevo": "112ed60d5dcc5838b6a5f795455dc02a0632b7927509e50f8ab640740bebec58"
+  },
+  "agente/motor.py": {
+   "base": null,
+   "nuevo": "e37f2a34a8124c34b52b83edf723168ac748edbd67344e97dbb08ad04a491590"
+  },
+  "agente/plano.py": {
+   "base": null,
+   "nuevo": "0b998c94ae52104b1d1457355f4d7ce1e6da1d44bc6fc10e8d81ade5ae7a6e80"
+  },
+  "agente/receta_ensamble.py": {
+   "base": null,
+   "nuevo": "340750a8f120ea984391f8656e4ba91719665d8191548ad11d6e55f4b2ce8ddd"
+  },
+  "agente/receta_pieza.py": {
+   "base": null,
+   "nuevo": "800640ddae23e4847057e78f79169ea9adacbddd76a574d327cd0bbf2c6019ad"
+  },
+  "agente/tornilleria.py": {
+   "base": null,
+   "nuevo": "3bc381c6b15efde0c95f0acd737cbe56c709fb22e567ee77fd249acab32e63c0"
+  },
+  "agente/vinculos.py": {
+   "base": null,
+   "nuevo": "b9cee7c06c65be1fae1801b226167db104f2417888b749132d58eb77bb3c38f5"
+  },
+  "api_agente.py": {
+   "base": null,
+   "nuevo": "ec5eb3e649541bb5a796b6bcd7f5dccc413b633c81bcdcb2ec456b2b1c65c653"
+  },
+  "build_piston_engine_project.py": {
+   "base": "cf0f77ca0837a7f03630ef9cc4a54713bc68197f1f49fa19eb7b5b7f1d9c5537",
+   "nuevo": "2a3b98073776f3b09fc307b8fba88242c768b949f93729f17b6f5ec58ea97068"
+  },
+  "cad_atomic_lib.py": {
+   "base": "fde943cac4ffdd5b7f0d0ca6c233dff594e8659e7306d14d134cbfb7bd45c96f",
+   "nuevo": "43ab08756d074f56f5bf03ee7bf545e2a4de9b3edd39edfd080599fa6031e798"
+  },
+  "cad_engine.py": {
+   "base": "eb37a9e1dee95f89c2a20b70878cef54a5922f2195a68e5ff57ffde7aab6f65d",
+   "nuevo": "c104900e13ff6435c76e5763175e63e34257fc4c3d59ad50f554fe828975f600"
+  },
+  "cad_validator.py": {
+   "base": "51fc0c191b2a1d3ebfec225867f7e88bb854a2a002a1c74d5628a35b8944d636",
+   "nuevo": "f00ec6e86048bf338d7a8f4dfa080f9855418178cebc60076e1f2177a741117c"
+  },
+  "cardan/ensamblar_cardan.py": {
+   "base": null,
+   "nuevo": "4bc54d80744ed1848d52a7a3a63d715f79782f9944a109f628252c054db4011b"
+  },
+  "cardan/inspeccionar_piezas.py": {
+   "base": null,
+   "nuevo": "2996c7fd9ddc356c9667ef258e3578fed08082c416b24b4e42ccbad9468f8e69"
+  },
+  "cardan/prueba_giro.py": {
+   "base": null,
+   "nuevo": "00949ac4e93b9e2fa92f7318bf03a2e687dbba2a00aa8afe059966078c833aad"
+  },
+  "cardan/rutas_cardan.py": {
+   "base": null,
+   "nuevo": "4d9788ba3c493f7d132e44ba891913f48620a33afa4b1156286734a781d32b00"
+  },
+  "config/mcp_config.json": {
+   "base": "99710e83451dfd508b9b9722cef35ef5789de171a9cdb75633d375f8c381aa9e",
+   "nuevo": "c5116509b08d00b188ac6ea104e40b36031007e9d5ac5da4f2c7e86fc12e398a"
+  },
+  "entorno.py": {
+   "base": null,
+   "nuevo": "724bf7223e7140b1dd0b71999c935a5a627a6ac9ef4b01b3dcf41a6a2e1978bd"
+  },
+  "gemini_brain.py": {
+   "base": "9fb6fb03247a64401297a268fcbba1dcd4bb26d18cc7001c3b82a14d354cb7fe",
+   "nuevo": "5fb44fd3e128838513444c7fe9629b4a180531acff24bd69c7496cc95df114cd"
+  },
+  "git_sync.py": {
+   "base": "f8132556544acc654d7ebb18a235e8a101ca9fc7026aca5d60e8dbe92d2dcb3c",
+   "nuevo": "7b4c877676c01fa3247d0edf2886fea6dd13eae48241cacd3a207e55e66efc59"
+  },
+  "pruebas/correr_todo.py": {
+   "base": null,
+   "nuevo": "6ba66af046f79f2e0f6321a05495c5a18f8bdb70f81643c3554a96d72ad6b121"
+  },
+  "pruebas/recetas/base_prueba.json": {
+   "base": null,
+   "nuevo": "e3bb0aa5a3322583391d58ced44c7e9de68202f81f26fcf416876fe1392f662a"
+  },
+  "pruebas/recetas/brida_patron.json": {
+   "base": null,
+   "nuevo": "69563e146965ed44377073355680ab281fef0a429790181a7311b8413ae07db2"
+  },
+  "pruebas/recetas/brida_prueba.json": {
+   "base": null,
+   "nuevo": "e9453e734296c35a519d2b64c864136570a47fffa8c1c8c329e812d216403b84"
+  },
+  "pruebas/recetas/brida_prueba_2.json": {
+   "base": null,
+   "nuevo": "7a9e5c329376ad3ad09e658a5e82f90f4e01da54655f32532271f9043aa3ab31"
+  },
+  "pruebas/recetas/brida_prueba_3.json": {
+   "base": null,
+   "nuevo": "2dd9c7f2070e46175ecf9bc488e8f8c8f231060d84587e31211014bf0bc95ae0"
+  },
+  "pruebas/recetas/choque_prueba.json": {
+   "base": null,
+   "nuevo": "576dc943fa1b4488bad4eb8c1dabe5530ad766519185f834a135bdcfd7902eb3"
+  },
+  "pruebas/recetas/eje_prueba.json": {
+   "base": null,
+   "nuevo": "b27785dc790ec0577a137771d669adfbf5920254efa25aee243c0b88b65669df"
+  },
+  "pruebas/recetas/eje_prueba_2.json": {
+   "base": null,
+   "nuevo": "73df5fd4669974c293d7e0c03a68106b3144239952d431eb1f0f0e1a88b9bd54"
+  },
+  "pruebas/recetas/eje_prueba_3.json": {
+   "base": null,
+   "nuevo": "7db55b9243f23a00c681ebe645412a161b1294c5f959a1421f7d2748dc3f6087"
+  },
+  "pruebas/recetas/eje_prueba_4.json": {
+   "base": null,
+   "nuevo": "f0869c753667b644dd0e0d16d6cf568682e61c8be81231cfcdf5b25cc7f43500"
+  },
+  "pruebas/recetas/ensamble_prueba.json": {
+   "base": null,
+   "nuevo": "3bffb5291f794de2910f5dd14da6eaab8f6b2b56ae2905e791bed1800dc7d141"
+  },
+  "pruebas/recetas/placa_agujeros.json": {
+   "base": null,
+   "nuevo": "ca87a37523f0299e6b833fd2324b31734f035937e1e209139f0c2d256abca23b"
+  },
+  "pruebas/recetas/tapa_prueba.json": {
+   "base": null,
+   "nuevo": "0c40a3818dcd0e9f8fd2a2da28bc681b432bebcbb0ba9dfb8b6a3d4ed3f482e2"
+  },
+  "pruebas/regresion_jrv11.py": {
+   "base": null,
+   "nuevo": "9806fdc1a628ed78dc19f9fdee27484126de3ebb207c52e5271b087f1d2081aa"
+  },
+  "rutas_se.py": {
+   "base": null,
+   "nuevo": "f92f3e523408fd57cb2e0adb07026b31f107eda29dbf38cd9ee57dd47dae9026"
+  },
+  "se_com_seguro.py": {
+   "base": null,
+   "nuevo": "929b64b2a14c55c63a645bb8ec9eac128942f8bd4bbe6db18f6871784e61f556"
+  },
+  "server.py": {
+   "base": "d52bdaab5d510eace8a0d92d83fb92693023579d3a41bf086296ba1e699bc2ba",
+   "nuevo": "b07a097b5375aea1c2288763db77eef7266f87d01f005f66d813fa77c92957ca"
+  },
+  "task_manager.py": {
+   "base": "43454ae720e4137afb04e62e06a07712ba795b09a5b3ced2a69c7cd378fa2bc3",
+   "nuevo": "112929cbc68b674e13172c1fb2eef66b141f0115b53d36273c240f54078b03f3"
+  },
+  "ui_controller.py": {
+   "base": "889904d67cee9ace0bac6b23f39233f033af8e94296b24e463fc512476483d79",
+   "nuevo": "bde30a96bc703e36a1e0debd1fdc0a83ec6c17aba627c1ad9c2c516b17f84ddf"
+  }
+ }
+}

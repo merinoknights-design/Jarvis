@@ -1,0 +1,23 @@
+{
+  "nombre": "Ensamble de prueba", "salida": "%ENSAYOS%\\Ensamble_prueba_2.asm",
+  "piezas": [
+    {"id": "base",  "archivo": "%ENSAYOS%\\Base_prueba.par", "fija": true},
+    {"id": "tapa",  "archivo": "%ENSAYOS%\\Tapa_prueba.par", "posicion": [0, 0, 30]},
+    {"id": "brida", "archivo": "%ENSAYOS%\\Brida_prueba.par", "posicion": [0, 0, 60]},
+    {"id": "eje",   "archivo": "%ENSAYOS%\\Eje_prueba.par", "posicion": [0, 0, 20]},
+    {"id": "eje2",  "archivo": "%ENSAYOS%\\Eje_prueba.par", "posicion": [0, 60, 0]}
+  ],
+  "relaciones": [
+    {"tipo": "coincidir", "a": {"pieza": "tapa", "cara": {"plano": {"normal": "-z"}}}, "b": {"pieza": "base", "cara": {"plano": {"normal": "+z"}}}},
+    {"tipo": "angulo", "a": {"pieza": "tapa", "cara": {"plano": {"normal": "+x"}}}, "b": {"pieza": "base", "cara": {"plano": {"normal": "+x"}}}, "angulo": 30, "plano_medida": {"a": {"pieza": "tapa", "cara": {"plano": {"normal": "-z"}}}, "b": {"pieza": "base", "cara": {"plano": {"normal": "+z"}}}}},
+    {"tipo": "alinear_plano", "a": {"pieza": "brida", "cara": {"plano": {"normal": "-z", "en": 0}}}, "b": {"pieza": "tapa", "cara": {"plano": {"normal": "-z"}}}, "desfase": 50},
+    {"tipo": "insertar", "a": {"pieza": "eje", "eje": {"cilindro": {"diametro": 20}}, "cara": {"plano": {"normal": "+z", "en": 40}}},
+                         "b": {"pieza": "brida", "eje": {"cilindro": {"diametro": 30}}, "cara": {"plano": {"normal": "-z", "en": 0}}}},
+    {"tipo": "tangente", "a": {"pieza": "eje2", "cara": {"cilindro": {"diametro": 30}}}, "b": {"pieza": "base", "cara": {"plano": {"normal": "+y"}}}},
+    {"tipo": "conjunto_rigido", "piezas": ["eje2", "tapa"]}
+  ],
+  "orden_pathfinder": ["base", "tapa", "eje2", "brida", "eje"],
+  "nombres": {"tapa": "Tapa superior", "eje": "Eje principal"}
+}
+
+

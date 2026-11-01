@@ -14,7 +14,8 @@ from ui_controller import open_url_in_chrome, focus_and_maximize_chrome_window, 
 
 BASE_DIR = Path("C:/Jarvis")
 GEMINI_CONFIG_FILE = BASE_DIR / "config" / "gemini_config.json"
-DEFAULT_BRAVE_KEY = "BSAPviCA5RJG-aAnfg5LZKBgX02gLQL"
+import entorno  # noqa: E402,F401  (carga C:\Jarvis\.env)
+DEFAULT_BRAVE_KEY = os.environ.get("BRAVE_API_KEY", "")  # Parche JRV-61 (2026-10-30): la clave vive en C:\Jarvis\.env
 
 
 def get_gemini_api_key() -> str:

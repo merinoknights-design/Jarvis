@@ -1,0 +1,8 @@
+{"nombre": "Placa con agujeros", "salida": "%ENSAYOS%\\Placa_agujeros.par", "esperado": {"caja_mm": [60, 40, 20]},
+ "propiedades": {"Title": "Placa con agujeros", "Author": "Usuario de prueba"},
+ "operaciones": [
+  {"tipo": "protrusion", "nombre": "Placa", "plano": "xy", "perfil": [{"rect": [0, 0, 60, 40]}], "distancia": 20},
+  {"tipo": "agujero", "nombre": "2 x Ø8 pasantes", "plano": "xy", "centros": [[-20, -10], [-20, 10]], "diametro": 8, "pasante": true},
+  {"tipo": "agujero", "nombre": "2 x M6 pasantes", "plano": "xy", "centros": [[20, -10], [20, 10]], "rosca": "M6", "pasante": true},
+  {"tipo": "agujero", "nombre": "M5 ciego 10", "plano": "xy", "centros": [[0, 0]], "rosca": "M5", "profundidad": 10}
+ ]}
